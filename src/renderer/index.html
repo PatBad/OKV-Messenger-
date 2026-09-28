@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'"
+    />
+    <title>OKV Messenger</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="is-collapsed">
+    <!-- Collapsed: just the logo bubble -->
+    <button id="bubble" class="bubble" type="button" aria-label="Open OKV Messenger">
+      <img src="../../assets/logo.svg" alt="" draggable="false" />
+      <span id="badge" class="badge" hidden></span>
+    </button>
+
+    <!-- Expanded: the message board -->
+    <section id="panel" class="panel" aria-label="OKV Messenger">
+      <header class="topbar">
+        <img class="topbar-logo" src="../../assets/logo.svg" alt="" draggable="false" />
+        <div class="topbar-title">
+          <h1>OKV Messenger</h1>
+          <p class="topbar-sub">
+            <span id="me-dept" class="me-dept"></span>
+            <span id="net-status" class="net-status"><span class="net-dot"></span><span id="net-text"></span></span>
+          </p>
+        </div>
+        <button id="open-settings" class="icon-btn" type="button" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.54V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.54-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.54V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.54 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.54 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1Z"/></svg>
+        </button>
+        <button id="collapse" class="icon-btn" type="button" title="Minimise to icon (Esc)" aria-label="Minimise to icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>
+        </button>
+      </header>
+
+      <!-- First run -->
+      <div id="screen-onboarding" class="screen onboarding" hidden>
+        <img class="onboarding-logo" src="../../assets/logo.svg" alt="" draggable="false" />
+        <h2>Welcome to OKV Messenger</h2>
+        <p>Which department is this computer for? Every message sent from here will be labelled with it.</p>
+        <div id="onboarding-depts" class="dept-grid"></div>
+        <p class="hint">You can change this later in Settings.</p>
+      </div>
+
+      <!-- Message board -->
+      <div id="screen-board" class="screen board" hidden>
+        <div class="toolbar">
+          <div id="filters" class="filters" role="tablist" aria-label="Show">
+            <button type="button" role="tab" data-filter="all" aria-selected="true">All</button>
+            <button type="button" role="tab" data-filter="to-us">For us</button>
+            <button type="button" role="tab" data-filter="from-us">From us</button>
+            <button type="button" role="tab" data-filter="urgent">Urgent</button>
+          </div>
+          <div id="search-box" class="search-box" hidden>
+            <input id="search" type="search" placeholder="Search messages" aria-label="Search messages" spellcheck="false" />
+          </div>
+          <button id="toggle-search" class="icon-btn small" type="button" title="Search (Ctrl+F)" aria-label="Search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
+          </button>
+        </div>
+
+        <div id="update-banner" class="banner" hidden>
+          <span id="update-banner-text"></span>
+          <button id="update-banner-btn" type="button" class="link-btn">Restart now</button>
+        </div>
+
+        <div class="list-wrap">
+          <div id="list" class="list" tabindex="-1" aria-live="polite"></div>
+          <button id="jump" class="jump" type="button" hidden>New messages ↓</button>
+        </div>
+
+        <form id="compose" class="compose" autocomplete="off">
+          <div class="compose-meta">
+            <label class="pill-select">
+              <span>To</span>
+              <select id="to" aria-label="Send to"></select>
+            </label>
+            <input id="author" class="author" type="text" maxlength="40" placeholder="Your name" aria-label="Your name (optional)" spellcheck="false" />
+            <button id="urgent" class="urgent-toggle" type="button" aria-pressed="false" title="Mark as urgent">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5"/><path d="M12 16.5v.01"/><path d="M10.3 3.9 2.4 17.5A2 2 0 0 0 4.1 20.5h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+              Urgent
+            </button>
+          </div>
+          <div class="compose-row">
+            <textarea id="text" rows="1" maxlength="4000" placeholder="Message everyone…" aria-label="Message"></textarea>
+            <button id="send" class="send" type="submit" disabled aria-label="Send">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></svg>
+            </button>
+          </div>
+          <p id="compose-error" class="compose-error" role="alert" hidden></p>
+        </form>
+      </div>
+
+      <!-- Settings -->
+      <div id="screen-settings" class="screen settings" hidden>
+        <div class="settings-head">
+          <button id="close-settings" class="icon-btn" type="button" aria-label="Back to messages">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="m11 18-6-6 6-6"/></svg>
+          </button>
+          <h2>Settings</h2>
+        </div>
+        <div class="settings-body">
+          <section>
+            <h3>This computer sends as</h3>
+            <div id="settings-depts" class="dept-grid compact"></div>
+          </section>
+          <section>
+            <h3>Alerts</h3>
+            <label class="switch-row">
+              <span>Play a sound for new messages</span>
+              <input id="opt-sound" type="checkbox" role="switch" />
+            </label>
+            <label class="switch-row">
+              <span>Start OKV Messenger with Windows</span>
+              <input id="opt-autostart" type="checkbox" role="switch" />
+            </label>
+          </section>
+          <section>
+            <h3>Computers on the network</h3>
+            <ul id="peer-list" class="peer-list"></ul>
+          </section>
+          <section>
+            <h3>About</h3>
+            <p class="about-line">Version <span id="version"></span> · <span id="host"></span></p>
+            <p class="about-line"><span id="update-text"></span> <button id="update-btn" type="button" class="link-btn"></button></p>
+            <p class="about-line"><button id="open-data" type="button" class="link-btn">Open message history folder</button></p>
+          </section>
+        </div>
+      </div>
+
+      <div id="toast" class="toast" role="status" hidden></div>
+    </section>
+
+    <script src="app.js"></script>
+  </body>
+</html>

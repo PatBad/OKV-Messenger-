@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1aa698"/>
+      <stop offset="1" stop-color="#0b5f58"/>
+    </linearGradient>
+  </defs>
+  <circle cx="128" cy="128" r="128" fill="url(#bg)"/>
+  <!-- speech bubble -->
+  <path d="M70 62h116a26 26 0 0 1 26 26v66a26 26 0 0 1-26 26h-54l-38 32v-32H70a26 26 0 0 1-26-26V88a26 26 0 0 1 26-26z" fill="#fff"/>
+  <!-- paw print -->
+  <g fill="#0f766e">
+    <path d="M128 118c-17 0-33 17-33 32 0 11 8 15 17 15 7 0 10-3 16-3s9 3 16 3c9 0 17-4 17-15 0-15-16-32-33-32z"/>
+    <ellipse cx="96" cy="112" rx="10" ry="13" transform="rotate(-22 96 112)"/>
+    <ellipse cx="116" cy="92" rx="10.5" ry="14" transform="rotate(-6 116 92)"/>
+    <ellipse cx="140" cy="92" rx="10.5" ry="14" transform="rotate(6 140 92)"/>
+    <ellipse cx="160" cy="112" rx="10" ry="13" transform="rotate(22 160 112)"/>
+  </g>
+</svg>
