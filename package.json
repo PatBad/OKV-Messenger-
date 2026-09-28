@@ -1,7 +1,7 @@
 {
   "name": "okv-messenger",
   "productName": "OKV Messenger",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Always-on-top message board for sharing messages between departments of the clinic.",
   "main": "src/main/main.js",
   "author": "OKV",
