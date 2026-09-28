@@ -16,7 +16,11 @@ const { createLogger } = require('./logger');
 const env = process.env;
 if (env.OKV_DATA_DIR) app.setPath('userData', path.resolve(env.OKV_DATA_DIR));
 
-const ICON_SIZE = 76; // window size while collapsed (60px bubble + room for its shadow)
+// The logo's box: a 60px bubble plus room for its shadow. iconPos is this box's top-left.
+const ICON_SIZE = 76;
+// While collapsed the window is this much bigger on every side, so the unread
+// pulse has room to spread. The extra area lets clicks through to the apps below.
+const PULSE_PAD = 22;
 const PANEL_WIDTH = 400;
 const PANEL_HEIGHT = 640;
 const EDGE = 12;
@@ -32,6 +36,7 @@ let updater = null;
 let log;
 let expanded = false;
 let iconPos = null;
+let panelRect = null;
 let quitting = false;
 
 if (!app.requestSingleInstanceLock()) {
@@ -107,9 +112,7 @@ app.on('before-quit', () => {
 function createWindow() {
   iconPos = validIconPosition(config.get('iconPosition')) || defaultIconPosition();
   win = new BrowserWindow({
-    ...iconPos,
-    width: ICON_SIZE,
-    height: ICON_SIZE,
+    ...collapsedBounds(),
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -133,6 +136,7 @@ function createWindow() {
     },
   });
   win.setAlwaysOnTop(true, 'screen-saver');
+  setClickThrough(true);
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   win.once('ready-to-show', () => {
     // First run: open straight onto the department picker.
@@ -156,11 +160,14 @@ function setExpanded(value) {
   if (expanded) {
     const bounds = panelBounds();
     origin = bounds.origin;
-    win.setBounds(bounds.rect);
+    panelRect = bounds.rect;
+    setClickThrough(false);
+    win.setBounds(panelRect);
     win.show();
     win.focus();
   } else {
-    win.setBounds({ ...iconPos, width: ICON_SIZE, height: ICON_SIZE });
+    win.setBounds(collapsedBounds());
+    setClickThrough(true);
     if (!win.isVisible()) win.showInactive();
     if (updater) updater.installIfIdle();
   }
@@ -179,6 +186,46 @@ function panelBounds() {
   return {
     rect: { x: Math.round(x), y: Math.round(y), width, height },
     origin: `${bottom ? 'bottom' : 'top'} ${right ? 'right' : 'left'}`,
+  };
+}
+
+function collapsedBounds() {
+  return {
+    x: iconPos.x - PULSE_PAD,
+    y: iconPos.y - PULSE_PAD,
+    width: ICON_SIZE + PULSE_PAD * 2,
+    height: ICON_SIZE + PULSE_PAD * 2,
+  };
+}
+
+/**
+ * While collapsed, clicks pass through the window except over the bubble
+ * itself (the page switches this off while the mouse is over the bubble).
+ * `forward` still delivers mouse movement so the page can tell.
+ */
+function setClickThrough(on) {
+  if (!win || win.isDestroyed()) return;
+  if (on && !expanded) win.setIgnoreMouseEvents(true, { forward: true });
+  else win.setIgnoreMouseEvents(false);
+}
+
+/** Where the bubble goes for a panel at `rect`: its corner nearest the screen edges. */
+function iconForPanel(rect) {
+  const wa = screen.getDisplayMatching(rect).workArea;
+  const right = rect.x + rect.width / 2 > wa.x + wa.width / 2;
+  const bottom = rect.y + rect.height / 2 > wa.y + wa.height / 2;
+  return {
+    x: right ? rect.x + rect.width - ICON_SIZE : rect.x,
+    y: bottom ? rect.y + rect.height - ICON_SIZE : rect.y,
+  };
+}
+
+function clampToWorkArea(rect) {
+  const wa = screen.getDisplayMatching(rect).workArea;
+  return {
+    ...rect,
+    x: Math.round(clamp(rect.x, wa.x, wa.x + wa.width - rect.width)),
+    y: Math.round(clamp(rect.y, wa.y, wa.y + wa.height - rect.height)),
   };
 }
 
@@ -386,18 +433,35 @@ ipcMain.handle('mark-read', () => {
   sendUnread();
 });
 
+// `pos` is where the page wants the window's top-left corner.
 ipcMain.on('drag-move', (_e, pos) => {
-  if (expanded || !pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
-  iconPos = { x: Math.round(pos.x), y: Math.round(pos.y) };
+  if (!win || !pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+  const x = Math.round(pos.x);
+  const y = Math.round(pos.y);
   // setBounds (not setPosition) so the size can't drift across mixed-DPI screens.
-  win.setBounds({ ...iconPos, width: ICON_SIZE, height: ICON_SIZE });
+  if (expanded) {
+    win.setBounds({ x, y, width: panelRect.width, height: panelRect.height });
+  } else {
+    iconPos = { x: x + PULSE_PAD, y: y + PULSE_PAD };
+    win.setBounds(collapsedBounds());
+  }
 });
 
 ipcMain.on('drag-end', () => {
-  iconPos = validIconPosition(iconPos) || defaultIconPosition();
-  win.setBounds({ ...iconPos, width: ICON_SIZE, height: ICON_SIZE });
+  if (!win) return;
+  if (expanded) {
+    // The bubble follows the panel, so it collapses and reopens in the same place.
+    iconPos = validIconPosition(iconForPanel(clampToWorkArea(win.getBounds()))) || defaultIconPosition();
+    panelRect = panelBounds().rect;
+    win.setBounds(panelRect);
+  } else {
+    iconPos = validIconPosition(iconPos) || defaultIconPosition();
+    win.setBounds(collapsedBounds());
+  }
   config.set({ iconPosition: iconPos });
 });
+
+ipcMain.on('click-through', (_e, on) => setClickThrough(!!on));
 
 ipcMain.handle('update-action', (_e, action) => {
   if (!updater) return;

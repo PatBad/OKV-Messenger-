@@ -13,6 +13,7 @@ There is no server and no internet requirement. Every computer keeps its own com
 | --- | --- |
 | Open the board | Click the logo |
 | Move the logo | Drag it anywhere on screen (it remembers where) |
+| Move the open board | Drag it by its top bar; the logo moves with it to the nearest corner |
 | Minimise back to the logo | Click **—** or press **Esc** |
 | Send | Type and press **Enter** (**Shift+Enter** for a new line) |
 | Send to one department | Choose it in the **To** box (default is Everyone) |

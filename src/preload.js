@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('okv', {
   markRead: () => ipcRenderer.invoke('mark-read'),
   dragMove: (x, y) => ipcRenderer.send('drag-move', { x, y }),
   dragEnd: () => ipcRenderer.send('drag-end'),
+  setClickThrough: (on) => ipcRenderer.send('click-through', on),
   updateAction: (action) => ipcRenderer.invoke('update-action', action),
   openDataFolder: () => ipcRenderer.invoke('open-data-folder'),
 

@@ -110,10 +110,13 @@ body.is-switching .panel {
 
 /* ---------- Collapsed bubble ---------- */
 
+/* The collapsed window is 120px square: the 60px bubble sits in the middle,
+   leaving room for the unread pulse to spread (see PULSE_PAD in main.js). */
 .bubble {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 30px;
+  left: 30px;
+  isolation: isolate;
   width: 60px;
   height: 60px;
   padding: 0;
@@ -161,16 +164,25 @@ body.is-switching .panel {
   line-height: 22px;
   text-align: center;
   box-shadow: 0 0 0 2px #fff;
+  z-index: 1;
 }
 
+/* Urgent unread: two staggered ripples spreading out from the bubble. */
+.bubble.has-urgent::before,
 .bubble.has-urgent::after {
   content: '';
   position: absolute;
-  inset: -4px;
+  inset: -3px;
   border-radius: 50%;
-  border: 3px solid #e11d48;
-  animation: ring 1.4s ease-out infinite;
+  border: 4px solid #e11d48;
+  background: rgba(225, 29, 72, 0.25);
+  animation: ring 1.6s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
   pointer-events: none;
+  z-index: -1;
+}
+
+.bubble.has-urgent::after {
+  animation-delay: 0.8s;
 }
 
 .bubble.bump {
@@ -178,8 +190,10 @@ body.is-switching .panel {
 }
 
 @keyframes ring {
-  0% { transform: scale(0.94); opacity: 1; }
-  100% { transform: scale(1.12); opacity: 0; }
+  /* 66px ring grows to ~115px, just inside the 120px window */
+  0% { transform: scale(1); opacity: 1; }
+  65% { opacity: 0.75; }
+  100% { transform: scale(1.75); opacity: 0; }
 }
 
 @keyframes bump {
@@ -220,6 +234,16 @@ body.is-collapsed .panel {
   padding: 10px 8px 10px 12px;
   border-bottom: 1px solid var(--border);
   flex: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.topbar.is-dragging {
+  cursor: grabbing;
+}
+
+.topbar button {
+  cursor: pointer;
 }
 
 .topbar-logo {

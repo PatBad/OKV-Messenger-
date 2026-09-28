@@ -177,42 +177,63 @@ function applyView({ expanded, origin, lastReadAt }) {
   }
 }
 
-// Drag the bubble around; a click without movement opens the panel.
-let drag = null;
-let suppressClick = false;
-
-el.bubble.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0) return;
-  drag = { offsetX: e.screenX - window.screenX, offsetY: e.screenY - window.screenY, startX: e.screenX, startY: e.screenY, moved: false };
-  el.bubble.setPointerCapture(e.pointerId);
-});
-
-el.bubble.addEventListener('pointermove', (e) => {
-  if (!drag) return;
-  if (!drag.moved && Math.hypot(e.screenX - drag.startX, e.screenY - drag.startY) > 4) {
-    drag.moved = true;
-    el.bubble.classList.add('is-dragging');
-  }
-  if (drag.moved) okv.dragMove(e.screenX - drag.offsetX, e.screenY - drag.offsetY);
-});
-
-function endDrag() {
-  if (!drag) return;
-  if (drag.moved) okv.dragEnd();
-  suppressClick = drag.moved;
-  drag = null;
-  el.bubble.classList.remove('is-dragging');
+/**
+ * Lets `handle` move the whole window. A press that doesn't move counts as a
+ * tap. Returns a function that says whether a drag is in progress.
+ */
+function makeDraggable(handle, { canStart = () => true, onTap = () => {} } = {}) {
+  let drag = null;
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !canStart(e)) return;
+    drag = {
+      offsetX: e.screenX - window.screenX,
+      offsetY: e.screenY - window.screenY,
+      startX: e.screenX,
+      startY: e.screenY,
+      moved: false,
+    };
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {
+      // pointer already released
+    }
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (!drag.moved && Math.hypot(e.screenX - drag.startX, e.screenY - drag.startY) > 4) {
+      drag.moved = true;
+      handle.classList.add('is-dragging');
+    }
+    if (drag.moved) okv.dragMove(e.screenX - drag.offsetX, e.screenY - drag.offsetY);
+  });
+  const end = (e) => {
+    if (!drag) return;
+    const { moved } = drag;
+    drag = null;
+    handle.classList.remove('is-dragging');
+    if (moved) okv.dragEnd();
+    else if (e.type === 'pointerup') onTap();
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+  return () => drag !== null;
 }
 
-el.bubble.addEventListener('pointerup', endDrag);
-el.bubble.addEventListener('pointercancel', endDrag);
-el.bubble.addEventListener('click', () => {
-  if (suppressClick) {
-    suppressClick = false;
-    return;
-  }
-  setExpanded(true);
+// The bubble: drag to move it, tap to open.
+const bubbleDragging = makeDraggable(el.bubble, { onTap: () => setExpanded(true) });
+el.bubble.addEventListener('click', (e) => {
+  if (e.detail === 0) setExpanded(true); // Enter/Space when it has keyboard focus
 });
+
+// Clicks pass through the empty space around the bubble to the apps below;
+// catch them again while the mouse is over the bubble itself.
+el.bubble.addEventListener('pointerenter', () => okv.setClickThrough(false));
+el.bubble.addEventListener('pointerleave', () => {
+  if (!bubbleDragging()) okv.setClickThrough(true);
+});
+
+// The open panel: drag it by its top bar (but not by the buttons there).
+makeDraggable(document.querySelector('.topbar'), { canStart: (e) => !e.target.closest('button') });
 
 el.collapse.addEventListener('click', () => setExpanded(false));
 
