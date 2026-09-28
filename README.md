@@ -17,7 +17,7 @@ There is no server and no internet requirement. Every computer keeps its own com
 | Send | Type and press **Enter** (**Shift+Enter** for a new line) |
 | Send to one department | Choose it in the **To** box (default is Everyone) |
 | Flag something urgent | Click **Urgent** before sending; it plays a louder alert and shows in red |
-| Filter | **All**, **For us** (sent to your department or everyone), **From us**, **Urgent** |
+| Filter | **All**, **For us** (sent directly to your department), **From us**, **Urgent** |
 | Search | Magnifying glass, or **Ctrl+F** |
 | Settings / Quit | Gear icon in the board, or right-click the OKV icon in the Windows system tray |
 

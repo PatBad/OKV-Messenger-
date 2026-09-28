@@ -242,7 +242,8 @@ function renderHeader() {
   el.meDept.hidden = !dept;
   const n = state.peers.length;
   el.netStatus.classList.toggle('is-online', n > 0);
-  el.netText.textContent = n === 0 ? 'No other computers found' : n === 1 ? '1 other computer online' : `${n} other computers online`;
+  el.netText.textContent = n === 0 ? 'No other PCs found' : `${n} other PC${n === 1 ? '' : 's'} online`;
+  el.netStatus.title = n === 0 ? 'No other computers running OKV Messenger found' : `${n} other computer${n === 1 ? '' : 's'} online`;
   el.collapse.hidden = !dept;
   el.openSettings.hidden = !dept;
 }
@@ -349,7 +350,7 @@ function emptyNode() {
   if (state.search) return h('div', { class: 'empty' }, h('strong', null, 'No matches'), `Nothing found for “${state.search}”.`);
   const text = {
     all: ['No messages yet', 'Messages from every department will appear here. Write the first one below.'],
-    'to-us': ['Nothing for you yet', `Messages sent to ${deptLabel(state.settings.department)} or to everyone will appear here.`],
+    'to-us': ['Nothing for you yet', `Messages sent directly to ${deptLabel(state.settings.department)} will appear here.`],
     'from-us': ['Nothing sent yet', `Messages sent by ${deptLabel(state.settings.department)} will appear here.`],
     urgent: ['No urgent messages', 'Messages marked urgent will appear here.'],
   }[state.filter];

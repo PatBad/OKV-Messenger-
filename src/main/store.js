@@ -213,7 +213,7 @@ class MessageStore extends EventEmitter {
     for (let i = this.sorted.length - 1; i >= 0; i--) {
       const m = this.sorted[i];
       if (before && compareMessages(m, before) >= 0) continue;
-      if (filter === 'to-us' && !(m.to === TO_ALL || m.to === department)) continue;
+      if (filter === 'to-us' && m.to !== department) continue;
       if (filter === 'from-us' && m.from !== department) continue;
       if (filter === 'urgent' && !m.urgent) continue;
       if (needle && !m.text.toLowerCase().includes(needle) && !m.author.toLowerCase().includes(needle)) continue;

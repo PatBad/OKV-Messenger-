@@ -66,11 +66,9 @@ test('query filters, searches and pages', () => {
   ]);
   const texts = (r) => r.messages.map((m) => m.text);
 
-  assert.deepEqual(texts(store.query({ filter: 'to-us', department: 'reception' })), [
-    'Bill ready for Max',
-    'Staff meeting 5pm',
-    'Courier arrived',
-  ]);
+  // "For us" means addressed directly to our department, not to everyone.
+  assert.deepEqual(texts(store.query({ filter: 'to-us', department: 'reception' })), ['Bill ready for Max']);
+  assert.deepEqual(texts(store.query({ filter: 'to-us', department: 'principal' })), []);
   assert.deepEqual(texts(store.query({ filter: 'from-us', department: 'reception' })), [
     'Dog in room 2',
     'Courier arrived',

@@ -255,12 +255,17 @@ body.is-collapsed .panel {
 .me-dept {
   color: var(--dept);
   font-weight: 600;
+  flex: none;
 }
 
 .net-status {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
+}
+
+#net-text {
   overflow: hidden;
   text-overflow: ellipsis;
 }
