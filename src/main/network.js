@@ -100,7 +100,7 @@ class Network extends EventEmitter {
 
   async start() {
     await this._startHttp();
-    this._startUdp();
+    await this._startUdp();
     this.timers.push(setInterval(() => this._tick(), this.beaconIntervalMs));
     return this;
   }
@@ -145,8 +145,8 @@ class Network extends EventEmitter {
         });
         server.on('error', (err) => this.log.error('http server error', err));
         this.server = server;
-        this.tcpPort = port;
-        this.log.info(`sync server listening on ${this.bindAddress}:${port}`);
+        this.tcpPort = server.address().port; // the real port when 0 (any free port) was asked for
+        this.log.info(`sync server listening on ${this.bindAddress}:${this.tcpPort}`);
         return;
       } catch (err) {
         this.log.warn(`port ${port} unavailable: ${err.code || err.message}`);
@@ -306,19 +306,28 @@ class Network extends EventEmitter {
     return { id: this.peerId, dept: profile.department, host: profile.host, port: this.tcpPort };
   }
 
+  /** Resolves once the discovery socket is listening, or has failed and a retry is scheduled. */
   _startUdp() {
-    const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-    sock.on('message', (buf, rinfo) => this._onBeacon(buf, rinfo));
-    sock.on('error', (err) => {
-      this.log.error('discovery socket error', err.message);
-      sock.close();
-      this.udp = null;
-      if (!this.stopped) setTimeout(() => this._startUdp(), 15000);
-    });
-    sock.bind(this.udpPort, this.bindAddress, () => {
-      if (this.broadcast) sock.setBroadcast(true);
-      this.udp = sock;
-      this._sendBeacon('hello');
+    return new Promise((resolve) => {
+      const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+      sock.on('message', (buf, rinfo) => this._onBeacon(buf, rinfo));
+      sock.on('error', (err) => {
+        this.log.error('discovery socket error', err.message);
+        try {
+          sock.close();
+        } catch {
+          // already closed
+        }
+        if (this.udp === sock) this.udp = null;
+        if (!this.stopped) setTimeout(() => this._startUdp(), 15000);
+        resolve();
+      });
+      sock.bind(this.udpPort, this.bindAddress, () => {
+        if (this.broadcast) sock.setBroadcast(true);
+        this.udp = sock;
+        this._sendBeacon('hello');
+        resolve();
+      });
     });
   }
 

@@ -7,24 +7,31 @@ const { MessageStore } = require('../src/main/store');
 const { Network, isPrivateAddress } = require('../src/main/network');
 const { tempDir, makeMessage, waitFor } = require('./helpers');
 
-let nextPort = 47000 + Math.floor(Math.random() * 1000) * 4;
-
+// Port 0 lets Windows pick a free port, so tests never collide with ports
+// that are in use or reserved on the machine running them.
 function makeNode(name, dept) {
-  const udpPort = nextPort++;
-  const tcpPort = nextPort++;
   const store = new MessageStore(tempDir()).load();
   const net = new Network({
     store,
     peerId: `peer-${name}`,
     getProfile: () => ({ department: dept, host: name }),
     bindAddress: '127.0.0.1',
-    udpPort,
-    tcpPorts: [tcpPort],
+    udpPort: 0,
+    tcpPorts: [0],
     beaconIntervalMs: 150,
   });
-  return { name, store, net, udpPort, tcpPort };
+  return { name, store, net };
 }
 
+async function start(...nodes) {
+  for (const n of nodes) {
+    await n.net.start();
+    n.udpPort = n.net.udp.address().port;
+    n.tcpPort = n.net.tcpPort;
+  }
+}
+
+// Call after start(), once each node's real ports are known.
 function link(nodes) {
   for (const n of nodes) {
     n.net.staticPeers = nodes.filter((o) => o !== n).map((o) => ({ address: '127.0.0.1', udpPort: o.udpPort }));
@@ -47,7 +54,6 @@ test('three computers discover each other and converge on the same history', asy
   const b = makeNode('B', 'clinical');
   const c = makeNode('C', 'principal');
   const nodes = [a, b, c];
-  link(nodes);
 
   // Each starts with history the others have never seen (e.g. they were offline).
   a.store.add([makeMessage({ text: 'from A 1' }), makeMessage({ text: 'from A 2' })], { local: true });
@@ -56,8 +62,9 @@ test('three computers discover each other and converge on the same history', asy
   a.store.add([shared]);
   c.store.add([shared, makeMessage({ from: 'principal', text: 'from C' })], { local: true });
 
-  for (const n of nodes) await n.net.start();
+  await start(...nodes);
   t.after(() => nodes.forEach((n) => n.net.stop()));
+  link(nodes);
 
   await waitFor(() => nodes.every((n) => n.net.peers().length === 2));
   await waitFor(() => sameHistory(nodes) && a.store.count === 5);
@@ -76,25 +83,38 @@ test('three computers discover each other and converge on the same history', asy
 test('a computer that cannot accept connections still syncs both ways', async (t) => {
   const open = makeNode('OPEN', 'reception');
   const closed = makeNode('CLOSED', 'clinical');
-  link([open, closed]);
   open.store.add([makeMessage({ text: 'on open' })]);
   closed.store.add([makeMessage({ from: 'clinical', text: 'on closed' })]);
 
-  await open.net.start();
-  await closed.net.start();
+  await start(open, closed);
   t.after(() => [open, closed].forEach((n) => n.net.stop()));
   // Simulate a firewall on CLOSED: its sync server refuses everything.
   closed.net.server.removeAllListeners('request');
   closed.net.server.on('request', (req, res) => req.socket.destroy());
   // And OPEN never starts a sync itself.
   open.net._maybeSync = () => {};
+  link([open, closed]);
 
   await waitFor(() => sameHistory([open, closed]) && open.store.count === 2);
 });
 
+test('sync server moves on to the next port when one is taken', async (t) => {
+  const blocker = http.createServer();
+  await new Promise((r) => blocker.listen(0, '127.0.0.1', r));
+  const taken = blocker.address().port;
+  t.after(() => blocker.close());
+
+  const node = makeNode('BUSY', 'reception');
+  node.net.tcpPorts = [taken, 0];
+  await start(node);
+  t.after(() => node.net.stop());
+  assert.notEqual(node.tcpPort, taken);
+  assert.ok(node.tcpPort > 0);
+});
+
 test('sync server rejects requests without the app header and bad messages', async (t) => {
   const node = makeNode('SOLO', 'reception');
-  await node.net.start();
+  await start(node);
   t.after(() => node.net.stop());
 
   const status = await new Promise((resolve, reject) => {
