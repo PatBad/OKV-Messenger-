@@ -35,7 +35,21 @@ jobs:
             exit 1
           fi
 
-      - name: Build and publish
-        run: npx electron-builder --win --publish always
+      - name: Build installer
+        run: npx electron-builder --win --publish never
+
+      # Publish with gh rather than electron-builder: electron-builder uploads
+      # files in parallel and can end up creating two releases for one tag.
+      # gh creates a single release, uploads everything, then makes it public.
+      - name: Publish release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/OKV-Messenger-Setup-*.exe \
+            dist/OKV-Messenger-Setup-*.exe.blockmap \
+            dist/latest.yml \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME#v}" \
+            --notes "OKV Messenger ${GITHUB_REF_NAME#v}"

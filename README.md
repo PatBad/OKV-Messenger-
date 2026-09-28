@@ -62,8 +62,6 @@ Installed copies check this repository's GitHub Releases 30 seconds after starti
    ```
 4. GitHub Actions (`.github/workflows/release.yml`) runs the tests, builds the installer and publishes it as a release. Every clinic computer picks it up within 4 hours, or straight away on restart.
 
-To publish from your own PC instead, set a `GH_TOKEN` environment variable (a GitHub token with `repo` access) and run `npm run release`.
-
 ## Development
 
 Requires Node.js 22 or newer.
