@@ -6,7 +6,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { DEPARTMENTS, DEPARTMENT_IDS, LIMITS } = require('./constants');
 const { Config } = require('./config');
-const { MessageStore, toWire, isUnread } = require('./store');
+const { MessageStore, DeletionLog, LocalHides, toWire, isUnread } = require('./store');
 const { Network } = require('./network');
 const { Updater } = require('./updater');
 const { createLogger } = require('./logger');
@@ -31,6 +31,8 @@ let win = null;
 let tray = null;
 let config;
 let store;
+let deletions; // "delete for everyone", shared with the other computers
+let hides; // "delete for me", this computer only
 let network = null;
 let updater = null;
 let log;
@@ -61,9 +63,13 @@ async function start() {
   }
   if (!config.get('firstRunAt')) config.set({ firstRunAt: Date.now() });
 
-  store = new MessageStore(path.join(dataDir, 'history')).load();
-  log.info(`loaded ${store.count} messages`);
+  const historyDir = path.join(dataDir, 'history');
+  store = new MessageStore(historyDir).load();
+  deletions = new DeletionLog(historyDir).load();
+  hides = new LocalHides(historyDir).load();
+  log.info(`loaded ${store.count} messages, ${deletions.count} deletions`);
   store.on('added', onMessagesAdded);
+  deletions.on('added', onMessagesChanged);
 
   applyAutoStart();
   createWindow();
@@ -77,6 +83,7 @@ async function start() {
 
   network = new Network({
     store,
+    deletions,
     peerId: config.get('peerId'),
     getProfile: () => ({ department: config.get('department'), host: HOST }),
     log,
@@ -315,6 +322,11 @@ function refreshTray() {
 
 // ---------- Messages ----------
 
+/** Messages that shouldn't be shown on this computer. */
+function isRemoved(m) {
+  return hides.has(m.id) || deletions.isDeleted(m);
+}
+
 function unreadContext() {
   return {
     department: config.get('department'),
@@ -325,7 +337,7 @@ function unreadContext() {
 
 function unread() {
   if (!store || !config.get('department')) return { count: 0, urgent: false };
-  return store.unread(unreadContext());
+  return store.unread({ ...unreadContext(), exclude: isRemoved });
 }
 
 function sendUnread() {
@@ -335,10 +347,40 @@ function sendUnread() {
 
 function onMessagesAdded(added) {
   const ctx = unreadContext();
-  const fresh = ctx.department ? added.filter((m) => isUnread(m, ctx)) : [];
+  const fresh = ctx.department ? added.filter((m) => isUnread(m, ctx) && !isRemoved(m)) : [];
   const alert = fresh.length ? (fresh.some((m) => m.urgent) ? 'urgent' : 'normal') : null;
   send('messages-added', { messages: added, alert });
   sendUnread();
+}
+
+/** Something other than a new message changed what's on the board (a deletion). */
+function onMessagesChanged() {
+  send('messages-changed');
+  sendUnread();
+}
+
+/**
+ * Deletes (or with `undo`, restores) a message. 'me' hides it on this
+ * computer; 'everyone' removes it from every computer, which only the
+ * department that sent it may do.
+ */
+function setDeleted(input, deleted) {
+  const { id, scope } = input || {};
+  const message = typeof id === 'string' ? store.byId.get(id) : null;
+  if (!message) throw new Error('Message not found');
+  if (scope === 'me') {
+    if (hides.set(id, deleted)) onMessagesChanged();
+    return;
+  }
+  if (scope !== 'everyone') throw new Error('Unknown delete scope');
+  const department = config.get('department');
+  if (message.from !== department) throw new Error('Only the department that sent it can delete it for everyone');
+  const [record] = deletions.add(
+    [{ id: crypto.randomUUID(), target: id, deleted, by: department, host: HOST, createdAt: Date.now() }],
+    { local: true },
+  );
+  if (record && network) network.pushNow([toWire(record)], 'deletions');
+  log.info(`${deleted ? 'deleted' : 'restored'} message ${id} for everyone`);
 }
 
 function publicSettings() {
@@ -378,7 +420,7 @@ ipcMain.handle('query', (_e, opts = {}) => {
       ? { createdAt: opts.before.createdAt, id: opts.before.id }
       : null;
   const limit = Number.isInteger(opts.limit) ? clamp(opts.limit, 1, 1000) : 150;
-  return store.query({ filter, search, before, limit, department: config.get('department') });
+  return store.query({ filter, search, before, limit, department: config.get('department'), exclude: isRemoved });
 });
 
 ipcMain.handle('send-message', (_e, input = {}) => {
@@ -462,6 +504,9 @@ ipcMain.on('drag-end', () => {
 });
 
 ipcMain.on('click-through', (_e, on) => setClickThrough(!!on));
+
+ipcMain.handle('delete-message', (_e, input) => setDeleted(input, true));
+ipcMain.handle('undo-delete', (_e, input) => setDeleted(input, false));
 
 ipcMain.handle('update-action', (_e, action) => {
   if (!updater) return;

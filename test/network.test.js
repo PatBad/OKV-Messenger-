@@ -3,24 +3,42 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
-const { MessageStore } = require('../src/main/store');
+const crypto = require('crypto');
+const { MessageStore, DeletionLog } = require('../src/main/store');
 const { Network, isPrivateAddress } = require('../src/main/network');
 const { tempDir, makeMessage, waitFor } = require('./helpers');
 
 // Port 0 lets Windows pick a free port, so tests never collide with ports
 // that are in use or reserved on the machine running them.
-function makeNode(name, dept) {
-  const store = new MessageStore(tempDir()).load();
+// `legacy` builds a node like version 1.0.x, which has no deletions.
+function makeNode(name, dept, { legacy = false } = {}) {
+  const dir = tempDir();
+  const store = new MessageStore(dir).load();
+  const deletions = legacy ? null : new DeletionLog(dir).load();
   const net = new Network({
     store,
+    deletions,
     peerId: `peer-${name}`,
     getProfile: () => ({ department: dept, host: name }),
     bindAddress: '127.0.0.1',
     udpPort: 0,
     tcpPorts: [0],
     beaconIntervalMs: 150,
+    minSyncGapMs: 100,
   });
-  return { name, store, net };
+  return { name, store, deletions, net };
+}
+
+function deletion(message, overrides = {}) {
+  return {
+    id: crypto.randomUUID(),
+    target: message.id,
+    deleted: true,
+    by: message.from,
+    host: 'TEST-PC',
+    createdAt: Date.now(),
+    ...overrides,
+  };
 }
 
 async function start(...nodes) {
@@ -96,6 +114,63 @@ test('a computer that cannot accept connections still syncs both ways', async (t
   link([open, closed]);
 
   await waitFor(() => sameHistory([open, closed]) && open.store.count === 2);
+});
+
+test('a delete for everyone reaches every computer, including ones that were offline', async (t) => {
+  const a = makeNode('A', 'reception');
+  const b = makeNode('B', 'clinical');
+  const c = makeNode('C', 'principal');
+  const msg = makeMessage({ from: 'reception', text: 'wrong room, ignore' });
+  for (const n of [a, b, c]) n.store.add([msg]);
+
+  // C is "offline" when A deletes and then un-deletes a second message.
+  await start(a, b);
+  t.after(() => [a, b, c].forEach((n) => n.net.stop()));
+  link([a, b]);
+
+  const [del] = a.deletions.add([deletion(msg)], { local: true });
+  a.net.pushNow([del], 'deletions');
+  await waitFor(() => b.deletions.isDeleted(b.store.byId.get(msg.id)));
+
+  const other = makeMessage({ from: 'reception', text: 'keep me' });
+  for (const n of [a, b, c]) n.store.add([other]);
+  a.deletions.add([deletion(other, { createdAt: Date.now() - 10 })]);
+  a.deletions.add([deletion(other, { deleted: false })]); // undo
+  await waitFor(() => b.deletions.count === 3);
+  assert.equal(b.deletions.isDeleted(other), false, 'the undo wins');
+
+  // C comes online and catches up from either computer.
+  await start(c);
+  link([a, b, c]);
+  await waitFor(() => c.deletions.count === 3);
+  assert.equal(c.deletions.isDeleted(msg), true);
+  assert.equal(c.deletions.isDeleted(other), false);
+});
+
+test('computers on 1.0.x keep syncing messages with newer ones', async (t) => {
+  const modern = makeNode('NEW', 'reception');
+  const legacy = makeNode('OLD', 'clinical', { legacy: true });
+  modern.store.add([makeMessage({ text: 'from new' })]);
+  legacy.store.add([makeMessage({ from: 'clinical', text: 'from old' })]);
+  const msg = makeMessage({ text: 'deleted on new' });
+  modern.store.add([msg]);
+  modern.deletions.add([deletion(msg)]);
+
+  let deletionRequests = 0;
+  await start(modern, legacy);
+  t.after(() => [modern, legacy].forEach((n) => n.net.stop()));
+  legacy.net.server.prependListener('request', (req) => {
+    if (req.url.includes('/deletions/')) deletionRequests++;
+  });
+  link([modern, legacy]);
+
+  await waitFor(() => sameHistory([modern, legacy]) && legacy.store.count === 3);
+  const [fresh] = modern.store.add([makeMessage({ text: 'pushed' })], { local: true });
+  modern.net.pushNow([fresh]);
+  await waitFor(() => legacy.store.has(fresh.id));
+  // Give a few more sync rounds a chance to (wrongly) ask about deletions.
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(deletionRequests, 0, 'never asks an old computer about deletions');
 });
 
 test('sync server moves on to the next port when one is taken', async (t) => {

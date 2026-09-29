@@ -67,6 +67,7 @@ function chunk(list, size) {
 class Network extends EventEmitter {
   constructor({
     store,
+    deletions = null,
     peerId,
     getProfile,
     log,
@@ -76,8 +77,14 @@ class Network extends EventEmitter {
     staticPeers = [],
     broadcast = true,
     beaconIntervalMs = NETWORK.BEACON_INTERVAL_MS,
+    minSyncGapMs = NETWORK.MIN_SYNC_GAP_MS,
   }) {
     super();
+    // What gets synced. Messages keep the original routes so computers still
+    // on 1.0.x carry on syncing with us; deletions (added in 1.1) have their
+    // own routes and are only exchanged with computers that announce them.
+    this.collections = [{ name: 'messages', store, prefix: '', key: 'messages' }];
+    if (deletions) this.collections.push({ name: 'deletions', store: deletions, prefix: '/deletions', key: 'records' });
     this.store = store;
     this.peerId = peerId;
     this.getProfile = getProfile;
@@ -88,6 +95,7 @@ class Network extends EventEmitter {
     this.staticPeers = staticPeers.map(parseStaticPeer).filter(Boolean);
     this.broadcast = broadcast && bindAddress !== '127.0.0.1';
     this.beaconIntervalMs = beaconIntervalMs;
+    this.minSyncGapMs = minSyncGapMs;
     this.peerMap = new Map();
     this.tcpPort = null;
     this.timers = [];
@@ -95,7 +103,7 @@ class Network extends EventEmitter {
     this.agent = new http.Agent({ keepAlive: true, maxSockets: 4 });
     this._beaconSoonTimer = null;
     this._onStoreAdded = () => this.announce();
-    store.on('added', this._onStoreAdded);
+    for (const c of this.collections) c.store.on('added', this._onStoreAdded);
   }
 
   async start() {
@@ -109,7 +117,7 @@ class Network extends EventEmitter {
     this.stopped = true;
     this.timers.forEach(clearInterval);
     clearTimeout(this._beaconSoonTimer);
-    this.store.off('added', this._onStoreAdded);
+    for (const c of this.collections) c.store.off('added', this._onStoreAdded);
     if (this.udp) this.udp.close();
     if (this.server) this.server.close();
     this.agent.destroy();
@@ -122,14 +130,25 @@ class Network extends EventEmitter {
       .sort((a, b) => (a.host || '').localeCompare(b.host || ''));
   }
 
-  /** Sends freshly written messages straight to every known computer. */
-  pushNow(messages) {
+  /** Sends freshly written records (messages by default) straight to every known computer. */
+  pushNow(records, name = 'messages') {
+    const c = this._collection(name);
     for (const peer of this.peerMap.values()) {
-      this._request(peer, 'POST', '/push', { from: this._self(), messages })
+      if (!this._peerHas(peer, c)) continue;
+      this._request(peer, 'POST', `${c.prefix}/push`, { from: this._self(), [c.key]: records })
         .then(() => this._markReachable(peer, true))
         .catch(() => this._markReachable(peer, false)); // they'll pick it up on their next sync
     }
     this.announce();
+  }
+
+  _collection(name) {
+    return this.collections.find((c) => c.name === name);
+  }
+
+  /** Every computer syncs messages; newer collections only with computers that announce them. */
+  _peerHas(peer, c) {
+    return c.name === 'messages' || Boolean(peer.known[c.name]);
   }
 
   // ---------- HTTP server ----------
@@ -168,25 +187,27 @@ class Network extends EventEmitter {
 
       const url = new URL(req.url, 'http://localhost');
       if (!url.pathname.startsWith(API)) return send(404, { error: 'not found' });
-      const route = `${req.method} ${url.pathname.slice(API.length)}`;
+      const rest = url.pathname.slice(API.length);
+      const c = this.collections.find((x) => x.prefix && rest.startsWith(`${x.prefix}/`)) || this.collections[0];
+      const route = `${req.method} ${rest.slice(c.prefix.length)}`;
       const address = normaliseAddress(req.socket.remoteAddress);
 
       if (route === 'GET /digest') {
-        return send(200, { id: this.peerId, ...this.store.digest() });
+        return send(200, { id: this.peerId, ...c.store.digest() });
       }
       const body = await readJson(req);
       if (route === 'POST /ids') {
         const days = Array.isArray(body.days) ? body.days.filter((d) => typeof d === 'string').slice(0, 5000) : [];
-        return send(200, { ids: this.store.idsForDays(days) });
+        return send(200, { ids: c.store.idsForDays(days) });
       }
       if (route === 'POST /get') {
         const ids = Array.isArray(body.ids) ? body.ids.filter((d) => typeof d === 'string').slice(0, NETWORK.CHUNK) : [];
-        return send(200, { messages: this.store.getWire(ids) });
+        return send(200, { [c.key]: c.store.getWire(ids) });
       }
       if (route === 'POST /push') {
         if (body.from) this._seePeer(body.from, address);
-        const messages = Array.isArray(body.messages) ? body.messages.slice(0, NETWORK.CHUNK) : [];
-        const added = this.store.add(messages);
+        const records = Array.isArray(body[c.key]) ? body[c.key].slice(0, NETWORK.CHUNK) : [];
+        const added = c.store.add(records);
         return send(200, { accepted: added.length });
       }
       return send(404, { error: 'not found' });
@@ -248,10 +269,15 @@ class Network extends EventEmitter {
   }
 
   async _syncOnce(peer) {
-    const remote = await this._request(peer, 'GET', '/digest');
-    const local = this.store.digest();
-    peer.count = remote.count;
-    peer.hash = remote.hash;
+    for (const c of this.collections) {
+      if (this._peerHas(peer, c)) await this._syncCollection(peer, c);
+    }
+  }
+
+  async _syncCollection(peer, c) {
+    const remote = await this._request(peer, 'GET', `${c.prefix}/digest`);
+    const local = c.store.digest();
+    peer.known[c.name] = { count: remote.count, hash: remote.hash };
     if (remote.count === local.count && remote.hash === local.hash) return;
 
     const remoteDays = remote.days && typeof remote.days === 'object' ? remote.days : {};
@@ -266,36 +292,41 @@ class Network extends EventEmitter {
     // Download what we're missing.
     const theirIds = new Set();
     for (const days of chunk(mismatched, 200)) {
-      const { ids } = await this._request(peer, 'POST', '/ids', { days });
+      const { ids } = await this._request(peer, 'POST', `${c.prefix}/ids`, { days });
       if (Array.isArray(ids)) ids.forEach((id) => theirIds.add(id));
     }
-    const missing = [...theirIds].filter((id) => !this.store.has(id));
+    const missing = [...theirIds].filter((id) => !c.store.has(id));
     for (const ids of chunk(missing, NETWORK.CHUNK)) {
-      const { messages } = await this._request(peer, 'POST', '/get', { ids });
-      if (Array.isArray(messages)) this.store.add(messages);
+      const response = await this._request(peer, 'POST', `${c.prefix}/get`, { ids });
+      if (Array.isArray(response[c.key])) c.store.add(response[c.key]);
     }
 
     // Upload what they're missing.
-    const toSend = this.store
+    const toSend = c.store
       .idsForDays(mismatched)
       .filter((id) => !theirIds.has(id))
-      .concat(this.store.idsForDays(theyLack));
+      .concat(c.store.idsForDays(theyLack));
     for (const ids of chunk(toSend, NETWORK.CHUNK)) {
-      await this._request(peer, 'POST', '/push', { from: this._self(), messages: this.store.getWire(ids) });
+      await this._request(peer, 'POST', `${c.prefix}/push`, { from: this._self(), [c.key]: c.store.getWire(ids) });
     }
     if (missing.length || toSend.length) {
-      this.log.info(`synced with ${peer.host || peer.address}: got ${missing.length}, sent ${toSend.length}`);
+      this.log.info(`synced ${c.name} with ${peer.host || peer.address}: got ${missing.length}, sent ${toSend.length}`);
     }
   }
 
   _maybeSync(peer) {
-    const local = this.store.digest();
-    if (peer.count === local.count && peer.hash === local.hash) return;
+    const stale = this.collections.some((c) => {
+      if (!this._peerHas(peer, c)) return false;
+      const known = peer.known[c.name];
+      const local = c.store.summary();
+      return !known || known.count !== local.count || known.hash !== local.hash;
+    });
+    if (!stale) return;
     if (peer.syncing) {
       peer.resync = true;
       return;
     }
-    if (Date.now() - (peer.lastSyncAttempt || 0) < NETWORK.MIN_SYNC_GAP_MS) return;
+    if (Date.now() - (peer.lastSyncAttempt || 0) < this.minSyncGapMs) return;
     this.syncWith(peer);
   }
 
@@ -332,8 +363,15 @@ class Network extends EventEmitter {
   }
 
   _beacon(type) {
-    const { count, hash } = this.store.digest();
-    return Buffer.from(JSON.stringify({ app: NETWORK.APP_ID, v: NETWORK.PROTOCOL, type, ...this._self(), count, hash }));
+    const { count, hash } = this.store.summary();
+    const beacon = { app: NETWORK.APP_ID, v: NETWORK.PROTOCOL, type, ...this._self(), count, hash };
+    // Extra fields are ignored by 1.0.x computers.
+    const deletions = this._collection('deletions');
+    if (deletions) {
+      const d = deletions.store.summary();
+      Object.assign(beacon, { dcount: d.count, dhash: d.hash });
+    }
+    return Buffer.from(JSON.stringify(beacon));
   }
 
   _sendBeacon(type, target) {
@@ -364,8 +402,8 @@ class Network extends EventEmitter {
     if (!isPrivateAddress(rinfo.address)) return;
     const peer = this._seePeer(b, rinfo.address);
     if (!peer) return;
-    if (Number.isInteger(b.count)) peer.count = b.count;
-    if (typeof b.hash === 'string') peer.hash = b.hash;
+    if (Number.isInteger(b.count) && typeof b.hash === 'string') peer.known.messages = { count: b.count, hash: b.hash };
+    if (Number.isInteger(b.dcount) && typeof b.dhash === 'string') peer.known.deletions = { count: b.dcount, hash: b.dhash };
     if (b.type === 'hello') this._sendBeacon('reply', { address: rinfo.address, port: rinfo.port });
     this._maybeSync(peer);
   }
@@ -379,7 +417,8 @@ class Network extends EventEmitter {
     let peer = this.peerMap.get(info.id);
     const isNew = !peer;
     if (!peer) {
-      peer = { id: info.id, reachable: null };
+      // known: the latest fingerprint we've heard for each collection it syncs.
+      peer = { id: info.id, reachable: null, known: {} };
       this.peerMap.set(info.id, peer);
     }
     const changed =

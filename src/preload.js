@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('okv', {
   getState: () => ipcRenderer.invoke('get-state'),
   query: (options) => ipcRenderer.invoke('query', options),
   sendMessage: (message) => ipcRenderer.invoke('send-message', message),
+  deleteMessage: (target) => ipcRenderer.invoke('delete-message', target),
+  undoDelete: (target) => ipcRenderer.invoke('undo-delete', target),
   setDepartment: (department) => ipcRenderer.invoke('set-department', department),
   setSettings: (values) => ipcRenderer.invoke('set-settings', values),
   setExpanded: (expanded) => ipcRenderer.invoke('set-expanded', expanded),
@@ -25,6 +27,7 @@ contextBridge.exposeInMainWorld('okv', {
 
   onView: on('view'),
   onMessages: on('messages-added'),
+  onMessagesChanged: on('messages-changed'),
   onUnread: on('unread'),
   onPeers: on('peers'),
   onUpdate: on('update-status'),

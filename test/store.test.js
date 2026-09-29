@@ -3,7 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
-const { MessageStore, sanitizeMessage } = require('../src/main/store');
+const crypto = require('crypto');
+const { MessageStore, DeletionLog, LocalHides, sanitizeMessage, sanitizeDeletion } = require('../src/main/store');
 const { tempDir, makeMessage } = require('./helpers');
 
 test('sanitizeMessage accepts valid messages and rejects bad ones', () => {
@@ -100,4 +101,78 @@ test('unread count ignores own messages, other departments and old history', () 
 
   store.add([makeMessage({ to: 'clinical', text: 'now!', urgent: true })]);
   assert.deepEqual(store.unread({ department: 'clinical', lastReadAt: 0, since }), { count: 3, urgent: true });
+});
+
+function deletion(message, overrides = {}) {
+  return {
+    id: crypto.randomUUID(),
+    target: message.id,
+    deleted: true,
+    by: message.from,
+    host: 'TEST-PC',
+    createdAt: Date.now(),
+    ...overrides,
+  };
+}
+
+test('sanitizeDeletion rejects malformed deletions', () => {
+  const msg = makeMessage();
+  assert.ok(sanitizeDeletion(deletion(msg)));
+  assert.equal(sanitizeDeletion(deletion(msg, { by: 'nobody' })), null);
+  assert.equal(sanitizeDeletion(deletion(msg, { deleted: 'yes' })), null);
+  assert.equal(sanitizeDeletion(deletion(msg, { target: 'bad id!' })), null);
+  assert.equal(sanitizeDeletion(deletion(msg, { createdAt: 0 })), null);
+});
+
+test('only the sending department can delete for everyone, and the latest delete or undo wins', () => {
+  const dir = tempDir();
+  const log = new DeletionLog(dir).load();
+  const msg = makeMessage({ from: 'reception' });
+  const t0 = Date.now();
+
+  log.add([deletion(msg, { by: 'clinical', createdAt: t0 })]);
+  assert.equal(log.isDeleted(msg), false, 'another department cannot delete it');
+
+  log.add([deletion(msg, { createdAt: t0 + 1 })]);
+  assert.equal(log.isDeleted(msg), true);
+
+  // Arrival order doesn't matter: an older undo arriving late changes nothing...
+  log.add([deletion(msg, { deleted: false, createdAt: t0 - 5 })]);
+  assert.equal(log.isDeleted(msg), true);
+  // ...but a newer one restores the message.
+  log.add([deletion(msg, { deleted: false, createdAt: t0 + 2 })]);
+  assert.equal(log.isDeleted(msg), false);
+
+  const reloaded = new DeletionLog(dir).load();
+  assert.equal(reloaded.count, 4);
+  assert.equal(reloaded.isDeleted(msg), false);
+  assert.deepEqual(reloaded.digest(), log.digest());
+});
+
+test('delete for me is remembered on this computer', () => {
+  const dir = tempDir();
+  const hides = new LocalHides(dir).load();
+  const a = makeMessage();
+  const b = makeMessage();
+  assert.equal(hides.set(a.id, true), true);
+  assert.equal(hides.set(a.id, true), false, 'already hidden');
+  hides.set(b.id, true);
+  hides.set(b.id, false); // undo
+  assert.equal(hides.set('bad id!', true), false);
+
+  const reloaded = new LocalHides(dir).load();
+  assert.equal(reloaded.has(a.id), true);
+  assert.equal(reloaded.has(b.id), false);
+});
+
+test('deleted and hidden messages drop out of the board and the unread count', () => {
+  const store = new MessageStore(tempDir()).load();
+  const keep = makeMessage({ to: 'all', text: 'keep' });
+  const gone = makeMessage({ to: 'all', text: 'gone' });
+  store.add([keep, gone]);
+  const exclude = (m) => m.id === gone.id;
+
+  assert.deepEqual(store.query({ exclude }).messages.map((m) => m.text), ['keep']);
+  assert.equal(store.unread({ department: 'clinical', lastReadAt: 0, since: 0, exclude }).count, 1);
+  assert.equal(store.unread({ department: 'clinical', lastReadAt: 0, since: 0 }).count, 2);
 });

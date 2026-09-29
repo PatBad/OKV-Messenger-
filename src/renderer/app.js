@@ -51,6 +51,8 @@ const el = {
   updateBtn: $('update-btn'),
   openData: $('open-data'),
   toast: $('toast'),
+  toastText: $('toast-text'),
+  toastAction: $('toast-action'),
 };
 
 const state = {
@@ -69,6 +71,8 @@ const state = {
   urgent: false,
   sending: false,
   hasUrgentUnread: false,
+  // Days the user has opened or closed (dayKey -> open). Otherwise only today is open.
+  dayOpen: new Map(),
 };
 
 // ---------- Helpers ----------
@@ -113,12 +117,33 @@ function dayLabel(ts) {
   return d.getFullYear() === today.getFullYear() ? dayFmt.format(d) : dayYearFmt.format(d);
 }
 
+// Static, trusted SVG markup for small icons.
+const ICONS = {
+  trash:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg>',
+};
+function icon(name) {
+  const t = document.createElement('template');
+  t.innerHTML = ICONS[name];
+  return t.content.firstChild;
+}
+
 let toastTimer;
-function toast(message) {
-  el.toast.textContent = message;
+/** Shows a short notice; `action` ({label, run}) adds a button such as Undo. */
+function toast(message, action = null) {
+  el.toastText.textContent = message;
+  el.toastAction.hidden = !action;
+  el.toast.classList.toggle('has-action', Boolean(action));
+  if (action) {
+    el.toastAction.textContent = action.label;
+    el.toastAction.onclick = () => {
+      el.toast.hidden = true;
+      action.run();
+    };
+  }
   el.toast.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.toast.hidden = true), 2600);
+  toastTimer = setTimeout(() => (el.toast.hidden = true), action ? 6000 : 2600);
 }
 
 // ---------- Sound ----------
@@ -362,9 +387,69 @@ function messageNode(m) {
       h('span', { class: ['msg-to', toUs && 'is-us'], title: toUs ? `To ${toLabel(m.to)}` : null }, `→ ${toUs ? 'You' : toLabel(m.to)}`),
       m.urgent ? h('span', { class: 'msg-tag' }, 'Urgent') : null,
       h('time', { class: 'msg-time', datetime: new Date(m.createdAt).toISOString(), title: fullFmt.format(m.createdAt) }, timeFmt.format(m.createdAt)),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'msg-delete',
+          title: 'Delete',
+          'aria-label': 'Delete message',
+          onclick: (e) => toggleDeleteChoices(e.currentTarget.closest('.msg'), m),
+        },
+        icon('trash'),
+      ),
     ),
     h('p', { class: 'msg-text' }, m.text),
   );
+}
+
+// ---------- Deleting ----------
+
+/** Shows (or hides) the "Delete: For me / For everyone" row under a message. */
+function toggleDeleteChoices(article, m) {
+  const open = article.querySelector('.msg-confirm');
+  for (const row of el.list.querySelectorAll('.msg-confirm')) {
+    row.closest('.msg').classList.remove('is-confirming');
+    row.remove();
+  }
+  if (open) return;
+  const ours = m.from === state.settings.department;
+  const row = h(
+    'div',
+    { class: 'msg-confirm' },
+    h('span', { class: 'msg-confirm-label' }, 'Delete'),
+    h('button', { type: 'button', class: 'chip', onclick: () => deleteMessage(m, 'me') }, 'For me'),
+    ours ? h('button', { type: 'button', class: ['chip', 'is-danger'], onclick: () => deleteMessage(m, 'everyone') }, 'For everyone') : null,
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'chip is-quiet',
+        onclick: () => {
+          row.remove();
+          article.classList.remove('is-confirming');
+        },
+      },
+      'Cancel',
+    ),
+    ours ? null : h('span', { class: 'msg-confirm-hint' }, `Only ${deptLabel(m.from)} can delete it for everyone`),
+  );
+  article.classList.add('is-confirming');
+  article.append(row);
+  row.querySelector('button').focus();
+}
+
+async function deleteMessage(m, scope) {
+  try {
+    await okv.deleteMessage({ id: m.id, scope });
+    // The list refreshes itself when the main process reports the change.
+    toast(scope === 'me' ? 'Deleted on this computer' : 'Deleted for everyone', {
+      label: 'Undo',
+      run: () => okv.undoDelete({ id: m.id, scope }).catch(() => toast('Couldn’t undo that')),
+    });
+  } catch {
+    toast('Couldn’t delete that message');
+  }
 }
 
 function emptyNode() {
@@ -378,27 +463,79 @@ function emptyNode() {
   return h('div', { class: 'empty' }, h('strong', null, text[0]), text[1]);
 }
 
-function renderList({ toBottom = false, keepTop = false } = {}) {
+// ---------- Days ----------
+
+function groupByDay(messages) {
+  const groups = [];
+  for (const m of messages) {
+    const key = dayKey(m.createdAt);
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) last.messages.push(m);
+    else groups.push({ key, first: m.createdAt, messages: [m] });
+  }
+  return groups;
+}
+
+/** Today is open and earlier days are folded, unless the user changed it. Searches show everything. */
+function isDayOpen(key) {
+  if (state.search) return true;
+  const chosen = state.dayOpen.get(key);
+  return chosen === undefined ? key === dayKey(Date.now()) : chosen;
+}
+
+function toggleDay(key) {
+  state.dayOpen.set(key, !isDayOpen(key));
+  renderList({ anchorDay: key });
+}
+
+function dayHeader(group, open) {
+  const n = group.messages.length;
+  const urgent = group.messages.filter((m) => m.urgent).length;
+  const fresh = group.messages.filter(isNew).length;
+  return h(
+    'button',
+    {
+      type: 'button',
+      class: ['day', open && 'is-open'],
+      'data-day': group.key,
+      'aria-expanded': String(open),
+      title: open ? 'Click to fold this day away' : 'Click to show these messages',
+      onclick: () => toggleDay(group.key),
+    },
+    h('span', { class: 'day-chevron' }),
+    h('span', { class: 'day-label' }, dayLabel(group.first)),
+    h('span', { class: 'day-count' }, `${n} message${n === 1 ? '' : 's'}`),
+    !open && urgent ? h('span', { class: 'day-flag is-urgent' }, `${urgent} urgent`) : null,
+    !open && fresh ? h('span', { class: 'day-flag is-new' }, `${fresh} new`) : null,
+  );
+}
+
+/**
+ * Redraws the message list. `anchorDay` keeps that day's header where it was
+ * on screen (used when a day is opened or folded).
+ */
+function renderList({ toBottom = false, keepTop = false, anchorDay = null } = {}) {
   const list = el.list;
   const gapBelow = list.scrollHeight - list.scrollTop - list.clientHeight;
   const oldTop = list.scrollTop;
   const oldHeight = list.scrollHeight;
+  const anchor = anchorDay && list.querySelector(`[data-day="${anchorDay}"]`);
+  const anchorOffset = anchor ? anchor.offsetTop - list.scrollTop : null;
 
   const nodes = [];
   if (state.more) nodes.push(h('button', { type: 'button', class: ['link-btn', 'older'], onclick: loadOlder }, 'Show older messages'));
   if (!state.messages.length) nodes.push(emptyNode());
-  let lastDay = null;
-  for (const m of state.messages) {
-    const key = dayKey(m.createdAt);
-    if (key !== lastDay) {
-      nodes.push(h('div', { class: 'day' }, h('span', null, dayLabel(m.createdAt))));
-      lastDay = key;
-    }
-    nodes.push(messageNode(m));
+  for (const group of groupByDay(state.messages)) {
+    const open = isDayOpen(group.key);
+    nodes.push(dayHeader(group, open));
+    if (open) nodes.push(...group.messages.map(messageNode));
   }
   list.replaceChildren(...nodes);
 
-  if (toBottom || gapBelow < 60) {
+  const newAnchor = anchorOffset !== null && list.querySelector(`[data-day="${anchorDay}"]`);
+  if (newAnchor) {
+    list.scrollTop = newAnchor.offsetTop - anchorOffset;
+  } else if (toBottom || gapBelow < 60) {
     list.scrollTop = list.scrollHeight;
     el.jump.hidden = true;
   } else if (keepTop) {
@@ -626,6 +763,11 @@ okv.onMessages(({ messages, alert }) => {
     if (!mine && !wasNearBottom && state.screen === 'board') el.jump.hidden = false;
   });
   if (state.expanded && !mine) okv.markRead();
+});
+
+// A message was deleted or restored, here or on another computer.
+okv.onMessagesChanged(() => {
+  if (state.settings.department) refresh();
 });
 
 okv.onUnread(({ count, urgent }) => {
