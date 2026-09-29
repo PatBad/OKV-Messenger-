@@ -26,7 +26,8 @@ function makeMessage(overrides = {}) {
   };
 }
 
-async function waitFor(fn, timeoutMs = 5000) {
+// Generous: build machines can be much slower than a clinic PC. Returns as soon as fn() is true.
+async function waitFor(fn, timeoutMs = 15000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (await fn()) return true;
