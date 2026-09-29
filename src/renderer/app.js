@@ -73,6 +73,7 @@ const state = {
   hasUrgentUnread: false,
   // Days the user has opened or closed (dayKey -> open). Otherwise only today is open.
   dayOpen: new Map(),
+  reactionChoices: [],
 };
 
 // ---------- Helpers ----------
@@ -387,6 +388,28 @@ function messageNode(m) {
       h('span', { class: ['msg-to', toUs && 'is-us'], title: toUs ? `To ${toLabel(m.to)}` : null }, `→ ${toUs ? 'You' : toLabel(m.to)}`),
       m.urgent ? h('span', { class: 'msg-tag' }, 'Urgent') : null,
       h('time', { class: 'msg-time', datetime: new Date(m.createdAt).toISOString(), title: fullFmt.format(m.createdAt) }, timeFmt.format(m.createdAt)),
+    ),
+    h('p', { class: 'msg-text' }, m.text),
+    reactionsNode(m),
+    // Shown while pointing at the message: react, or delete.
+    h(
+      'div',
+      { class: 'msg-actions', role: 'toolbar', 'aria-label': 'Message actions' },
+      ...state.reactionChoices.map((emoji) => {
+        const on = hasReacted(m, emoji);
+        return h(
+          'button',
+          {
+            type: 'button',
+            class: ['msg-react', on && 'is-on'],
+            title: on ? `Remove your ${emoji}` : `React with ${emoji}`,
+            'aria-pressed': String(on),
+            onclick: () => react(m, emoji),
+          },
+          emoji,
+        );
+      }),
+      h('span', { class: 'msg-actions-sep' }),
       h(
         'button',
         {
@@ -399,8 +422,44 @@ function messageNode(m) {
         icon('trash'),
       ),
     ),
-    h('p', { class: 'msg-text' }, m.text),
   );
+}
+
+// ---------- Reactions ----------
+
+function hasReacted(m, emoji) {
+  const r = (m.reactions || []).find((x) => x.emoji === emoji);
+  return Boolean(r && r.by.includes(state.settings.department));
+}
+
+/** Chips under a message, e.g. "👍 You, Reception". Clicking one adds or removes your reaction. */
+function reactionsNode(m) {
+  if (!m.reactions || !m.reactions.length) return null;
+  const me = state.settings.department;
+  return h(
+    'div',
+    { class: 'msg-reactions' },
+    ...m.reactions.map((r) => {
+      const mine = r.by.includes(me);
+      const names = [...(mine ? ['You'] : []), ...r.by.filter((d) => d !== me).map(deptLabel)];
+      return h(
+        'button',
+        {
+          type: 'button',
+          class: ['reaction', mine && 'is-mine'],
+          title: mine ? `Click to remove your ${r.emoji}` : `Click to react with ${r.emoji} too`,
+          onclick: () => react(m, r.emoji),
+        },
+        h('span', { class: 'reaction-emoji' }, r.emoji),
+        h('span', { class: 'reaction-who' }, names.join(', ')),
+      );
+    }),
+  );
+}
+
+function react(m, emoji) {
+  // The list refreshes itself when the main process reports the change.
+  okv.react({ id: m.id, emoji }).catch(() => toast('Couldn’t add that reaction'));
 }
 
 // ---------- Deleting ----------
@@ -796,6 +855,7 @@ async function init() {
   const s = await okv.getState();
   Object.assign(state, {
     departments: s.departments,
+    reactionChoices: s.reactions || [],
     settings: s.settings,
     unread: s.unread.count,
     hasUrgentUnread: s.unread.urgent,

@@ -727,21 +727,68 @@ body.is-collapsed .panel {
   white-space: nowrap;
 }
 
-/* Bin button: hidden until you point at the message. */
+/* Floating bar (reactions + bin), shown while pointing at a message.
+   It sits over the time in the top-right corner. */
+.msg-actions {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg);
+  box-shadow: 0 2px 8px rgba(8, 30, 29, 0.14);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
+
+.msg:hover .msg-actions,
+.msg:focus-within .msg-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.msg-react,
 .msg-delete {
   display: inline-grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  margin: -3px -4px -3px 0;
+  width: 28px;
+  height: 26px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
+}
+
+.msg-react {
+  font-family: 'Segoe UI Emoji', 'Segoe UI Symbol', var(--font);
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 0.1s;
+}
+
+.msg-react:hover {
+  background: var(--surface-2);
+  transform: scale(1.18);
+}
+
+.msg-react.is-on {
+  background: var(--primary-soft);
+}
+
+.msg-actions-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--border);
+}
+
+.msg-delete {
   color: var(--faint);
-  opacity: 0;
-  flex: none;
-  align-self: center;
 }
 
 .msg-delete svg {
@@ -749,15 +796,47 @@ body.is-collapsed .panel {
   height: 15px;
 }
 
-.msg:hover .msg-delete,
-.msg.is-confirming .msg-delete,
-.msg-delete:focus-visible {
-  opacity: 1;
-}
-
 .msg-delete:hover {
   background: var(--urgent-soft);
   color: var(--urgent);
+}
+
+/* Reaction chips under a message, e.g. "👍 You, Reception". */
+.msg-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 550;
+}
+
+.reaction:hover {
+  border-color: var(--muted);
+}
+
+.reaction.is-mine {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--text);
+}
+
+.reaction-emoji {
+  font-family: 'Segoe UI Emoji', 'Segoe UI Symbol', var(--font);
+  font-size: 14px;
+  line-height: 1;
 }
 
 .msg-confirm {

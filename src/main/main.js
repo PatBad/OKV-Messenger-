@@ -4,9 +4,9 @@ const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell } = require('elec
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { DEPARTMENTS, DEPARTMENT_IDS, LIMITS } = require('./constants');
+const { DEPARTMENTS, DEPARTMENT_IDS, REACTIONS, LIMITS } = require('./constants');
 const { Config } = require('./config');
-const { MessageStore, DeletionLog, LocalHides, toWire, isUnread } = require('./store');
+const { MessageStore, DeletionLog, ReactionLog, LocalHides, toWire, isUnread } = require('./store');
 const { Network } = require('./network');
 const { Updater } = require('./updater');
 const { createLogger } = require('./logger');
@@ -33,6 +33,7 @@ let config;
 let store;
 let deletions; // "delete for everyone", shared with the other computers
 let hides; // "delete for me", this computer only
+let reactions; // emoji reactions, shared with the other computers
 let network = null;
 let updater = null;
 let log;
@@ -67,9 +68,11 @@ async function start() {
   store = new MessageStore(historyDir).load();
   deletions = new DeletionLog(historyDir).load();
   hides = new LocalHides(historyDir).load();
+  reactions = new ReactionLog(historyDir).load();
   log.info(`loaded ${store.count} messages, ${deletions.count} deletions`);
   store.on('added', onMessagesAdded);
   deletions.on('added', onMessagesChanged);
+  reactions.on('added', onMessagesChanged);
 
   applyAutoStart();
   createWindow();
@@ -84,6 +87,7 @@ async function start() {
   network = new Network({
     store,
     deletions,
+    reactions,
     peerId: config.get('peerId'),
     getProfile: () => ({ department: config.get('department'), host: HOST }),
     log,
@@ -403,6 +407,7 @@ ipcMain.handle('get-state', () => ({
   version: app.getVersion(),
   host: HOST,
   departments: DEPARTMENTS,
+  reactions: REACTIONS,
   settings: publicSettings(),
   expanded,
   unread: unread(),
@@ -420,7 +425,10 @@ ipcMain.handle('query', (_e, opts = {}) => {
       ? { createdAt: opts.before.createdAt, id: opts.before.id }
       : null;
   const limit = Number.isInteger(opts.limit) ? clamp(opts.limit, 1, 1000) : 150;
-  return store.query({ filter, search, before, limit, department: config.get('department'), exclude: isRemoved });
+  const result = store.query({ filter, search, before, limit, department: config.get('department'), exclude: isRemoved });
+  // Copies, so the stored messages don't get a reactions field.
+  result.messages = result.messages.map((m) => ({ ...m, reactions: reactions.forMessage(m.id, REACTIONS) }));
+  return result;
 });
 
 ipcMain.handle('send-message', (_e, input = {}) => {
@@ -506,6 +514,21 @@ ipcMain.on('drag-end', () => {
 ipcMain.on('click-through', (_e, on) => setClickThrough(!!on));
 
 ipcMain.handle('delete-message', (_e, input) => setDeleted(input, true));
+
+// Adds this department's emoji reaction to a message, or takes it back if it's already there.
+ipcMain.handle('react', (_e, { id, emoji } = {}) => {
+  const department = config.get('department');
+  if (!department) throw new Error('Choose a department first');
+  if (!REACTIONS.includes(emoji)) throw new Error('Unknown reaction');
+  if (typeof id !== 'string' || !store.has(id)) throw new Error('Message not found');
+  const on = !reactions.hasReacted(id, department, emoji);
+  const [record] = reactions.add(
+    [{ id: crypto.randomUUID(), target: id, emoji, on, by: department, host: HOST, createdAt: Date.now() }],
+    { local: true },
+  );
+  if (record && network) network.pushNow([toWire(record)], 'reactions');
+  return on;
+});
 ipcMain.handle('undo-delete', (_e, input) => setDeleted(input, false));
 
 ipcMain.handle('update-action', (_e, action) => {

@@ -19,6 +19,7 @@ There is no server and no internet requirement. Every computer keeps its own com
 | Send to one department | Choose it in the **To** box (default is Everyone) |
 | Flag something urgent | Click **Urgent** before sending; it plays a louder alert and shows in red |
 | Filter | **All**, **For us** (sent directly to your department), **From us**, **Urgent** |
+| React to a message | Point at it and click 👌 👍 😂 😅. Reactions show under the message on every computer, e.g. "👍 You, Reception". Click your reaction again to take it back |
 | Delete a message | Point at it and click the bin. **For me** hides it on this computer only. **For everyone** removes it from every computer, and is only offered for messages your department sent. **Undo** appears for a few seconds afterwards |
 | Tidy up earlier days | Earlier days are folded into one line each (showing how many messages, urgent and new ones it holds). Click a day to open or fold it |
 | Search | Magnifying glass, or **Ctrl+F** |
@@ -42,7 +43,7 @@ The installer puts the app in the current Windows user's profile, so future upda
 - A computer that was switched off catches up automatically the next time it starts, as long as any other computer that has the messages is on.
 - Messages are only accepted from private network addresses (192.168.x.x, 10.x.x.x, 172.16–31.x.x).
 
-"Delete for everyone" travels between computers the same way messages do, so a computer that was off catches up when it starts.
+"Delete for everyone" and reactions travel between computers the same way messages do, so a computer that was off catches up when it starts.
 
 Each computer stores its history in `%APPDATA%\OKV Messenger\history\messages.jsonl`. Deleting never removes a message from that file: deletions are recorded separately (`deletions.jsonl` for everyone, `hidden.jsonl` for this computer only) and the message is just hidden from the board. Settings > "Open message history folder" opens it. Back up that file to keep a permanent copy.
 

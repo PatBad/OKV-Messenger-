@@ -4,7 +4,15 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const crypto = require('crypto');
-const { MessageStore, DeletionLog, LocalHides, sanitizeMessage, sanitizeDeletion } = require('../src/main/store');
+const {
+  MessageStore,
+  DeletionLog,
+  ReactionLog,
+  LocalHides,
+  sanitizeMessage,
+  sanitizeDeletion,
+  sanitizeReaction,
+} = require('../src/main/store');
 const { tempDir, makeMessage } = require('./helpers');
 
 test('sanitizeMessage accepts valid messages and rejects bad ones', () => {
@@ -175,4 +183,43 @@ test('deleted and hidden messages drop out of the board and the unread count', (
   assert.deepEqual(store.query({ exclude }).messages.map((m) => m.text), ['keep']);
   assert.equal(store.unread({ department: 'clinical', lastReadAt: 0, since: 0, exclude }).count, 1);
   assert.equal(store.unread({ department: 'clinical', lastReadAt: 0, since: 0 }).count, 2);
+});
+
+test('reactions: one per department and emoji, latest add or remove wins', () => {
+  const dir = tempDir();
+  const log = new ReactionLog(dir).load();
+  const msg = makeMessage();
+  const order = ['👌', '👍', '😂', '😅'];
+  const t0 = Date.now();
+  const react = (by, emoji, on, at) =>
+    log.add([{ id: crypto.randomUUID(), target: msg.id, emoji, on, by, host: 'PC', createdAt: at }]);
+
+  react('reception', '😂', true, t0);
+  react('clinical', '👍', true, t0 + 1);
+  react('reception', '👍', true, t0 + 2);
+  react('reception', '👍', true, t0 + 3); // clicked on a second Reception computer
+  assert.deepEqual(log.forMessage(msg.id, order), [
+    { emoji: '👍', by: ['clinical', 'reception'] },
+    { emoji: '😂', by: ['reception'] },
+  ]);
+  assert.equal(log.hasReacted(msg.id, 'reception', '👍'), true);
+
+  react('reception', '😂', false, t0 + 4); // taken back
+  react('clinical', '👍', true, t0 - 10); // an old record arriving late changes nothing
+  assert.deepEqual(log.forMessage(msg.id, order), [{ emoji: '👍', by: ['clinical', 'reception'] }]);
+  assert.deepEqual(log.forMessage('no-such-message', order), []);
+
+  const reloaded = new ReactionLog(dir).load();
+  assert.deepEqual(reloaded.forMessage(msg.id, order), log.forMessage(msg.id, order));
+  assert.equal(reloaded.hasReacted(msg.id, 'reception', '😂'), false);
+});
+
+test('sanitizeReaction accepts short emojis and rejects bad records', () => {
+  const base = { id: crypto.randomUUID(), target: crypto.randomUUID(), emoji: '👍', on: true, by: 'clinical', createdAt: Date.now() };
+  assert.ok(sanitizeReaction(base));
+  assert.ok(sanitizeReaction({ ...base, emoji: '🎉' }), 'newer emojis are kept for later versions');
+  assert.equal(sanitizeReaction({ ...base, emoji: '' }), null);
+  assert.equal(sanitizeReaction({ ...base, emoji: 'a very long piece of text' }), null);
+  assert.equal(sanitizeReaction({ ...base, on: 'yes' }), null);
+  assert.equal(sanitizeReaction({ ...base, by: 'nobody' }), null);
 });

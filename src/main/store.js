@@ -65,6 +65,24 @@ function sanitizeDeletion(d) {
   return { v: 1, id, target, deleted, by, host, createdAt: Math.floor(createdAt) };
 }
 
+/**
+ * Department `by` adding (on: true) or removing (on: false) an emoji reaction
+ * on one message. Any short emoji is accepted, so a later version can offer
+ * more without older computers rejecting them.
+ */
+function sanitizeReaction(r) {
+  if (!r || typeof r !== 'object') return null;
+  const { id, target, emoji, on, by, createdAt } = r;
+  const host = r.host ?? '';
+  if (!validId(id) || !validId(target)) return null;
+  if (typeof emoji !== 'string' || !emoji || emoji.length > 16 || /\s/.test(emoji)) return null;
+  if (typeof on !== 'boolean') return null;
+  if (!DEPARTMENT_IDS.includes(by)) return null;
+  if (!validHost(host)) return null;
+  if (!validTime(createdAt)) return null;
+  return { v: 1, id, target, emoji, on, by, host, createdAt: Math.floor(createdAt) };
+}
+
 function toWire(record) {
   const { receivedAt, local, ...wire } = record;
   return wire;
@@ -319,6 +337,59 @@ class DeletionLog extends RecordLog {
   }
 }
 
+/** Emoji reactions on messages, shared between computers. */
+class ReactionLog extends RecordLog {
+  constructor(dir) {
+    super(dir, 'reactions.jsonl', sanitizeReaction);
+    this.byTarget = new Map();
+  }
+
+  _track(record) {
+    const list = this.byTarget.get(record.target);
+    if (list) list.push(record);
+    else this.byTarget.set(record.target, [record]);
+  }
+
+  /** Whether department `by` currently has reacted to `messageId` with `emoji`. */
+  hasReacted(messageId, by, emoji) {
+    return this._current(messageId).get(`${by} ${emoji}`) === true;
+  }
+
+  /** Latest on/off per "department emoji" for one message. */
+  _current(messageId) {
+    const latest = new Map();
+    for (const r of this.byTarget.get(messageId) || []) {
+      const key = `${r.by} ${r.emoji}`;
+      const prev = latest.get(key);
+      if (!prev || compareRecords(r, prev) > 0) latest.set(key, r);
+    }
+    const on = new Map();
+    for (const [key, r] of latest) on.set(key, r.on);
+    return on;
+  }
+
+  /**
+   * Reactions to show on a message: [{ emoji, by: [departments] }], emojis in
+   * `order` first, then any others, departments in the order they reacted.
+   */
+  forMessage(messageId, order = []) {
+    const list = this.byTarget.get(messageId);
+    if (!list) return [];
+    const current = this._current(messageId);
+    const byEmoji = new Map();
+    for (const r of [...list].sort(compareRecords)) {
+      if (current.get(`${r.by} ${r.emoji}`) !== true) continue;
+      if (!byEmoji.has(r.emoji)) byEmoji.set(r.emoji, []);
+      const depts = byEmoji.get(r.emoji);
+      if (!depts.includes(r.by)) depts.push(r.by);
+    }
+    const rank = (e) => (order.includes(e) ? order.indexOf(e) : order.length);
+    return [...byEmoji]
+      .map(([emoji, by]) => ({ emoji, by }))
+      .sort((a, b) => rank(a.emoji) - rank(b.emoji));
+  }
+}
+
 /** Messages hidden on this computer only ("delete for me"). Never shared. */
 class LocalHides {
   constructor(dir) {
@@ -370,9 +441,11 @@ function isUnread(m, { department, lastReadAt, since }) {
 module.exports = {
   MessageStore,
   DeletionLog,
+  ReactionLog,
   LocalHides,
   sanitizeMessage,
   sanitizeDeletion,
+  sanitizeReaction,
   toWire,
   dayKey,
   isUnread,

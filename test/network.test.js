@@ -4,20 +4,22 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 const crypto = require('crypto');
-const { MessageStore, DeletionLog } = require('../src/main/store');
+const { MessageStore, DeletionLog, ReactionLog } = require('../src/main/store');
 const { Network, isPrivateAddress } = require('../src/main/network');
 const { tempDir, makeMessage, waitFor } = require('./helpers');
 
 // Port 0 lets Windows pick a free port, so tests never collide with ports
 // that are in use or reserved on the machine running them.
-// `legacy` builds a node like version 1.0.x, which has no deletions.
-function makeNode(name, dept, { legacy = false } = {}) {
+// `features` mimics older versions: [] is 1.0.x, ['deletions'] is 1.1.0.
+function makeNode(name, dept, { features = ['deletions', 'reactions'] } = {}) {
   const dir = tempDir();
   const store = new MessageStore(dir).load();
-  const deletions = legacy ? null : new DeletionLog(dir).load();
+  const deletions = features.includes('deletions') ? new DeletionLog(dir).load() : null;
+  const reactions = features.includes('reactions') ? new ReactionLog(dir).load() : null;
   const net = new Network({
     store,
     deletions,
+    reactions,
     peerId: `peer-${name}`,
     getProfile: () => ({ department: dept, host: name }),
     bindAddress: '127.0.0.1',
@@ -26,7 +28,11 @@ function makeNode(name, dept, { legacy = false } = {}) {
     beaconIntervalMs: 150,
     minSyncGapMs: 100,
   });
-  return { name, store, deletions, net };
+  return { name, store, deletions, reactions, net };
+}
+
+function reaction(message, by, emoji, overrides = {}) {
+  return { id: crypto.randomUUID(), target: message.id, emoji, on: true, by, host: 'TEST-PC', createdAt: Date.now(), ...overrides };
 }
 
 function deletion(message, overrides = {}) {
@@ -149,7 +155,7 @@ test('a delete for everyone reaches every computer, including ones that were off
 
 test('computers on 1.0.x keep syncing messages with newer ones', async (t) => {
   const modern = makeNode('NEW', 'reception');
-  const legacy = makeNode('OLD', 'clinical', { legacy: true });
+  const legacy = makeNode('OLD', 'clinical', { features: [] });
   modern.store.add([makeMessage({ text: 'from new' })]);
   legacy.store.add([makeMessage({ from: 'clinical', text: 'from old' })]);
   const msg = makeMessage({ text: 'deleted on new' });
@@ -171,6 +177,38 @@ test('computers on 1.0.x keep syncing messages with newer ones', async (t) => {
   // Give a few more sync rounds a chance to (wrongly) ask about deletions.
   await new Promise((r) => setTimeout(r, 600));
   assert.equal(deletionRequests, 0, 'never asks an old computer about deletions');
+});
+
+test('reactions reach every computer, and 1.1.0 computers are never asked about them', async (t) => {
+  const a = makeNode('A', 'reception');
+  const b = makeNode('B', 'clinical');
+  const v110 = makeNode('V110', 'principal', { features: ['deletions'] });
+  const msg = makeMessage({ from: 'principal', text: 'Staff meeting at 5' });
+  for (const n of [a, b, v110]) n.store.add([msg]);
+
+  let reactionRequests = 0;
+  await start(a, b, v110);
+  t.after(() => [a, b, v110].forEach((n) => n.net.stop()));
+  v110.net.server.prependListener('request', (req) => {
+    if (req.url.includes('/reactions/')) reactionRequests++;
+  });
+  link([a, b, v110]);
+
+  const [thumb] = a.reactions.add([reaction(msg, 'reception', '👍')], { local: true });
+  a.net.pushNow([thumb], 'reactions');
+  b.reactions.add([reaction(msg, 'clinical', '👍'), reaction(msg, 'clinical', '😂')]);
+  await waitFor(() => a.reactions.count === 3 && b.reactions.count === 3);
+  assert.deepEqual(a.reactions.forMessage(msg.id, ['👌', '👍', '😂', '😅']), [
+    { emoji: '👍', by: ['reception', 'clinical'] },
+    { emoji: '😂', by: ['clinical'] },
+  ]);
+
+  // Messages still flow to and from the 1.1.0 computer.
+  const [fresh] = v110.store.add([makeMessage({ from: 'principal', text: 'from 1.1.0' })], { local: true });
+  v110.net.pushNow([fresh]);
+  await waitFor(() => a.store.has(fresh.id) && b.store.has(fresh.id));
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(reactionRequests, 0);
 });
 
 test('sync server moves on to the next port when one is taken', async (t) => {

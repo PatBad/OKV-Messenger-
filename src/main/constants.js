@@ -12,6 +12,9 @@ const DEPARTMENT_IDS = DEPARTMENTS.map((d) => d.id);
 // Recipient value meaning "every department".
 const TO_ALL = 'all';
 
+// Emoji reactions offered on messages, in the order they're shown.
+const REACTIONS = ['👌', '👍', '😂', '😅'];
+
 const NETWORK = {
   APP_ID: 'okv-messenger',
   PROTOCOL: 1,
@@ -35,4 +38,4 @@ const LIMITS = {
   MAX_TS: Date.UTC(2100, 0, 1),
 };
 
-module.exports = { DEPARTMENTS, DEPARTMENT_IDS, TO_ALL, NETWORK, LIMITS };
+module.exports = { DEPARTMENTS, DEPARTMENT_IDS, TO_ALL, REACTIONS, NETWORK, LIMITS };

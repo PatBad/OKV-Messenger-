@@ -68,6 +68,7 @@ class Network extends EventEmitter {
   constructor({
     store,
     deletions = null,
+    reactions = null,
     peerId,
     getProfile,
     log,
@@ -80,11 +81,18 @@ class Network extends EventEmitter {
     minSyncGapMs = NETWORK.MIN_SYNC_GAP_MS,
   }) {
     super();
-    // What gets synced. Messages keep the original routes so computers still
-    // on 1.0.x carry on syncing with us; deletions (added in 1.1) have their
-    // own routes and are only exchanged with computers that announce them.
-    this.collections = [{ name: 'messages', store, prefix: '', key: 'messages' }];
-    if (deletions) this.collections.push({ name: 'deletions', store: deletions, prefix: '/deletions', key: 'records' });
+    // What gets synced. Messages keep the original routes and beacon fields
+    // (count/hash) so computers on 1.0.x carry on syncing with us. Each newer
+    // collection has its own routes and beacon fields (e.g. dcount/dhash) and
+    // is only exchanged with computers whose beacons announce it; older
+    // versions simply ignore fields they don't know.
+    this.collections = [{ name: 'messages', store, prefix: '', key: 'messages', beacon: '' }];
+    if (deletions) {
+      this.collections.push({ name: 'deletions', store: deletions, prefix: '/deletions', key: 'records', beacon: 'd' });
+    }
+    if (reactions) {
+      this.collections.push({ name: 'reactions', store: reactions, prefix: '/reactions', key: 'records', beacon: 'r' });
+    }
     this.store = store;
     this.peerId = peerId;
     this.getProfile = getProfile;
@@ -363,13 +371,11 @@ class Network extends EventEmitter {
   }
 
   _beacon(type) {
-    const { count, hash } = this.store.summary();
-    const beacon = { app: NETWORK.APP_ID, v: NETWORK.PROTOCOL, type, ...this._self(), count, hash };
-    // Extra fields are ignored by 1.0.x computers.
-    const deletions = this._collection('deletions');
-    if (deletions) {
-      const d = deletions.store.summary();
-      Object.assign(beacon, { dcount: d.count, dhash: d.hash });
+    const beacon = { app: NETWORK.APP_ID, v: NETWORK.PROTOCOL, type, ...this._self() };
+    for (const c of this.collections) {
+      const { count, hash } = c.store.summary();
+      beacon[`${c.beacon}count`] = count;
+      beacon[`${c.beacon}hash`] = hash;
     }
     return Buffer.from(JSON.stringify(beacon));
   }
@@ -402,8 +408,11 @@ class Network extends EventEmitter {
     if (!isPrivateAddress(rinfo.address)) return;
     const peer = this._seePeer(b, rinfo.address);
     if (!peer) return;
-    if (Number.isInteger(b.count) && typeof b.hash === 'string') peer.known.messages = { count: b.count, hash: b.hash };
-    if (Number.isInteger(b.dcount) && typeof b.dhash === 'string') peer.known.deletions = { count: b.dcount, hash: b.dhash };
+    for (const c of this.collections) {
+      const count = b[`${c.beacon}count`];
+      const hash = b[`${c.beacon}hash`];
+      if (Number.isInteger(count) && typeof hash === 'string') peer.known[c.name] = { count, hash };
+    }
     if (b.type === 'hello') this._sendBeacon('reply', { address: rinfo.address, port: rinfo.port });
     this._maybeSync(peer);
   }
