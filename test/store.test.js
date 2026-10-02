@@ -223,3 +223,32 @@ test('sanitizeReaction accepts short emojis and rejects bad records', () => {
   assert.equal(sanitizeReaction({ ...base, on: 'yes' }), null);
   assert.equal(sanitizeReaction({ ...base, by: 'nobody' }), null);
 });
+
+test('query can be limited to one day, as used when deleting a day', () => {
+  const store = new MessageStore(tempDir()).load();
+  const day = Date.UTC(2026, 9, 1);
+  const at = (h) => day + h * 3600e3;
+  store.add([
+    makeMessage({ text: 'day before', createdAt: at(-2) }),
+    makeMessage({ text: 'morning', createdAt: at(9) }),
+    makeMessage({ text: 'urgent noon', createdAt: at(12), urgent: true }),
+    makeMessage({ text: 'next day', createdAt: at(25) }),
+  ]);
+  const inDay = (opts) =>
+    store.query({ after: day, before: { createdAt: day + 86400e3, id: '' }, limit: Infinity, ...opts }).messages.map((m) => m.text);
+  assert.deepEqual(inDay(), ['morning', 'urgent noon']);
+  assert.deepEqual(inDay({ filter: 'urgent' }), ['urgent noon']);
+});
+
+test('delete for me can hide many messages in one go', () => {
+  const dir = tempDir();
+  const hides = new LocalHides(dir).load();
+  const ids = [makeMessage(), makeMessage(), makeMessage()].map((m) => m.id);
+  assert.equal(hides.setMany([...ids, ids[0], 'bad id!'], true), true);
+  assert.equal(hides.setMany(ids, true), false, 'nothing new to hide');
+  hides.setMany([ids[1]], false);
+
+  const reloaded = new LocalHides(dir).load();
+  assert.deepEqual(ids.map((id) => reloaded.has(id)), [true, false, true]);
+  assert.equal(fs.readFileSync(reloaded.file, 'utf8').trim().split('\n').length, 4, 'one line per change');
+});

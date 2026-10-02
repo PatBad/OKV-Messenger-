@@ -544,13 +544,39 @@ body.is-collapsed .panel {
   scrollbar-width: thin;
 }
 
-/* Day header: click to fold a day's messages away or show them again. */
+/* Day banner: fold a day's messages away or show them again, or delete the day.
+   An open day's banner sticks to the top of the list while you scroll through
+   that day (each day is its own .day-group, so the next day's banner takes over). */
 .day {
+  margin: 6px 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.day.is-open {
+  position: sticky;
+  top: -6px; /* the list's top padding, so it pins flush with the top edge */
+  z-index: 2;
+  background: var(--surface);
+  box-shadow: 0 6px 6px -6px rgba(8, 30, 29, 0.18);
+}
+
+.day:not(.is-open) {
+  background: var(--bg);
+  border-color: var(--border);
+}
+
+.day-bar {
+  display: flex;
+  align-items: center;
+}
+
+.day-toggle {
   display: flex;
   align-items: center;
   gap: 7px;
-  width: 100%;
-  margin: 6px 0;
+  flex: 1;
+  min-width: 0;
   padding: 6px 8px;
   border: none;
   border-radius: 8px;
@@ -560,18 +586,49 @@ body.is-collapsed .panel {
   text-align: left;
 }
 
-.day:hover {
+.day-toggle:hover {
   background: var(--surface-2);
   color: var(--text);
 }
 
-.day:not(.is-open) {
-  background: var(--bg);
-  border: 1px solid var(--border);
+.day-delete {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--faint);
+  opacity: 0;
+  flex: none;
 }
 
-.day:not(.is-open):hover {
-  background: var(--surface-2);
+.day-delete svg {
+  width: 15px;
+  height: 15px;
+}
+
+.day:hover .day-delete,
+.day:focus-within .day-delete {
+  opacity: 1;
+}
+
+.day-delete:hover {
+  background: var(--urgent-soft);
+  color: var(--urgent);
+}
+
+.day-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 6px 6px;
+  padding: 8px 4px 2px;
+  border-top: 1px dashed var(--border);
 }
 
 .day-chevron {

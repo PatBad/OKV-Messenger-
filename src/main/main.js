@@ -372,19 +372,46 @@ function setDeleted(input, deleted) {
   const { id, scope } = input || {};
   const message = typeof id === 'string' ? store.byId.get(id) : null;
   if (!message) throw new Error('Message not found');
+  if (scope === 'everyone' && message.from !== config.get('department')) {
+    throw new Error('Only the department that sent it can delete it for everyone');
+  }
+  setManyDeleted([id], scope, deleted);
+}
+
+/**
+ * Deletes (or with deleted=false, restores) several messages at once. For
+ * 'everyone', messages other departments sent are skipped. Returns the ids
+ * that were acted on.
+ */
+function setManyDeleted(ids, scope, deleted) {
+  const messages = ids.map((id) => store.byId.get(id)).filter(Boolean);
   if (scope === 'me') {
-    if (hides.set(id, deleted)) onMessagesChanged();
-    return;
+    if (hides.setMany(messages.map((m) => m.id), deleted)) onMessagesChanged();
+    return messages.map((m) => m.id);
   }
   if (scope !== 'everyone') throw new Error('Unknown delete scope');
   const department = config.get('department');
-  if (message.from !== department) throw new Error('Only the department that sent it can delete it for everyone');
-  const [record] = deletions.add(
-    [{ id: crypto.randomUUID(), target: id, deleted, by: department, host: HOST, createdAt: Date.now() }],
+  const ours = messages.filter((m) => m.from === department);
+  const now = Date.now();
+  const added = deletions.add(
+    ours.map((m) => ({ id: crypto.randomUUID(), target: m.id, deleted, by: department, host: HOST, createdAt: now })),
     { local: true },
   );
-  if (record && network) network.pushNow([toWire(record)], 'deletions');
-  log.info(`${deleted ? 'deleted' : 'restored'} message ${id} for everyone`);
+  if (added.length) {
+    if (network) network.pushNow(added.map(toWire), 'deletions');
+    log.info(`${deleted ? 'deleted' : 'restored'} ${added.length} message(s) for everyone`);
+  }
+  return ours.map((m) => m.id);
+}
+
+/** The tab and search box, cleaned up, as used by the board and by deleting a day. */
+function queryFilters(opts) {
+  return {
+    filter: ['all', 'to-us', 'from-us', 'urgent'].includes(opts.filter) ? opts.filter : 'all',
+    search: typeof opts.search === 'string' ? opts.search.slice(0, 200) : '',
+    department: config.get('department'),
+    exclude: isRemoved,
+  };
 }
 
 function publicSettings() {
@@ -418,14 +445,12 @@ ipcMain.handle('get-state', () => ({
 }));
 
 ipcMain.handle('query', (_e, opts = {}) => {
-  const filter = ['all', 'to-us', 'from-us', 'urgent'].includes(opts.filter) ? opts.filter : 'all';
-  const search = typeof opts.search === 'string' ? opts.search.slice(0, 200) : '';
   const before =
     opts.before && Number.isFinite(opts.before.createdAt) && typeof opts.before.id === 'string'
       ? { createdAt: opts.before.createdAt, id: opts.before.id }
       : null;
   const limit = Number.isInteger(opts.limit) ? clamp(opts.limit, 1, 1000) : 150;
-  const result = store.query({ filter, search, before, limit, department: config.get('department'), exclude: isRemoved });
+  const result = store.query({ ...queryFilters(opts), before, limit });
   // Copies, so the stored messages don't get a reactions field.
   result.messages = result.messages.map((m) => ({ ...m, reactions: reactions.forMessage(m.id, REACTIONS) }));
   return result;
@@ -530,6 +555,27 @@ ipcMain.handle('react', (_e, { id, emoji } = {}) => {
   return on;
 });
 ipcMain.handle('undo-delete', (_e, input) => setDeleted(input, false));
+
+// Deletes every message shown under one day's banner: that day (local time),
+// in the current tab and search. Returns the ids deleted, for Undo.
+ipcMain.handle('delete-day', (_e, opts = {}) => {
+  const { start, end, scope } = opts;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 2 * 86400000) {
+    throw new Error('Not a valid day');
+  }
+  const { messages } = store.query({
+    ...queryFilters(opts),
+    after: start,
+    before: { createdAt: end, id: '' },
+    limit: Number.MAX_SAFE_INTEGER,
+  });
+  return { ids: setManyDeleted(messages.map((m) => m.id), scope, true) };
+});
+
+ipcMain.handle('undo-delete-many', (_e, { ids, scope } = {}) => {
+  if (!Array.isArray(ids)) throw new Error('No messages given');
+  setManyDeleted(ids.filter((id) => typeof id === 'string'), scope, false);
+});
 
 ipcMain.handle('update-action', (_e, action) => {
   if (!updater) return;

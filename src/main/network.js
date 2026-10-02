@@ -143,9 +143,12 @@ class Network extends EventEmitter {
     const c = this._collection(name);
     for (const peer of this.peerMap.values()) {
       if (!this._peerHas(peer, c)) continue;
-      this._request(peer, 'POST', `${c.prefix}/push`, { from: this._self(), [c.key]: records })
-        .then(() => this._markReachable(peer, true))
-        .catch(() => this._markReachable(peer, false)); // they'll pick it up on their next sync
+      // Receivers take at most CHUNK records per request (e.g. deleting a busy day).
+      for (const part of chunk(records, NETWORK.CHUNK)) {
+        this._request(peer, 'POST', `${c.prefix}/push`, { from: this._self(), [c.key]: part })
+          .then(() => this._markReachable(peer, true))
+          .catch(() => this._markReachable(peer, false)); // they'll pick it up on their next sync
+      }
     }
     this.announce();
   }

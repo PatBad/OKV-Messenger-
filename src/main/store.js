@@ -269,14 +269,16 @@ class MessageStore extends RecordLog {
   /**
    * Returns up to `limit` messages matching the filter, oldest first, that sort
    * before the `before` cursor ({createdAt, id}). `more` says whether older
-   * matches exist. Messages for which `exclude` returns true are skipped.
+   * matches exist. Messages for which `exclude` returns true are skipped, and
+   * `after` (a timestamp) leaves out anything older.
    */
-  query({ filter = 'all', department = null, search = '', before = null, limit = 200, exclude = null } = {}) {
+  query({ filter = 'all', department = null, search = '', before = null, after = null, limit = 200, exclude = null } = {}) {
     const needle = search.trim().toLowerCase();
     const out = [];
     let more = false;
     for (let i = this.sorted.length - 1; i >= 0; i--) {
       const m = this.sorted[i];
+      if (after !== null && m.createdAt < after) break;
       if (before && compareRecords(m, before) >= 0) continue;
       if (filter === 'to-us' && m.to !== department) continue;
       if (filter === 'from-us' && m.from !== department) continue;
@@ -421,10 +423,19 @@ class LocalHides {
 
   /** Hides (or un-hides) a message. Returns whether anything changed. */
   set(id, hidden) {
-    if (!validId(id) || this.ids.has(id) === hidden) return false;
-    fs.appendFileSync(this.file, JSON.stringify({ id, hidden, at: Date.now() }) + '\n');
-    if (hidden) this.ids.add(id);
-    else this.ids.delete(id);
+    return this.setMany([id], hidden);
+  }
+
+  /** Hides (or un-hides) several messages in one write. Returns whether anything changed. */
+  setMany(ids, hidden) {
+    const changing = [...new Set(ids)].filter((id) => validId(id) && this.ids.has(id) !== hidden);
+    if (!changing.length) return false;
+    const at = Date.now();
+    fs.appendFileSync(this.file, changing.map((id) => JSON.stringify({ id, hidden, at })).join('\n') + '\n');
+    for (const id of changing) {
+      if (hidden) this.ids.add(id);
+      else this.ids.delete(id);
+    }
     return true;
   }
 }

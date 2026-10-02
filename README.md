@@ -21,7 +21,8 @@ There is no server and no internet requirement. Every computer keeps its own com
 | Filter | **All**, **For us** (sent directly to your department), **From us**, **Urgent** |
 | React to a message | Point at it and click 👌 👍 😂 😅. Reactions show under the message on every computer, e.g. "👍 You, Reception". Click your reaction again to take it back |
 | Delete a message | Point at it and click the bin. **For me** hides it on this computer only. **For everyone** removes it from every computer, and is only offered for messages your department sent. **Undo** appears for a few seconds afterwards |
-| Tidy up earlier days | Earlier days are folded into one line each (showing how many messages, urgent and new ones it holds). Click a day to open or fold it |
+| Tidy up earlier days | Earlier days are folded into one banner each (showing how many messages, urgent and new ones it holds). Click a banner to open or fold that day. An open day's banner stays pinned at the top while you scroll through it |
+| Delete a whole day | Point at a day's banner and click its bin. **For me** hides all of that day's messages on this computer; **Ours for everyone** removes the ones your department sent from every computer. It only deletes what's shown under the banner, so in the **Urgent** tab it only deletes that day's urgent messages. **Undo** appears afterwards |
 | Search | Magnifying glass, or **Ctrl+F** |
 | Settings / Quit | Gear icon in the board, or right-click the OKV icon in the Windows system tray |
 

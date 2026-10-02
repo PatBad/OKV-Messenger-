@@ -535,6 +535,15 @@ function groupByDay(messages) {
   return groups;
 }
 
+/** Local midnight-to-midnight bounds of the day containing `ts`. */
+function dayBounds(ts) {
+  const d = new Date(ts);
+  return {
+    start: new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(),
+    end: new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime(),
+  };
+}
+
 /** Today is open and earlier days are folded, unless the user changed it. Searches show everything. */
 function isDayOpen(key) {
   if (state.search) return true;
@@ -547,30 +556,104 @@ function toggleDay(key) {
   renderList({ anchorDay: key });
 }
 
+/**
+ * A day's banner. While the day is open it sticks to the top of the list as
+ * you scroll through it, so it can be folded from anywhere in the day.
+ */
 function dayHeader(group, open) {
   const n = group.messages.length;
   const urgent = group.messages.filter((m) => m.urgent).length;
   const fresh = group.messages.filter(isNew).length;
   return h(
-    'button',
-    {
-      type: 'button',
-      class: ['day', open && 'is-open'],
-      'data-day': group.key,
-      'aria-expanded': String(open),
-      title: open ? 'Click to fold this day away' : 'Click to show these messages',
-      onclick: () => toggleDay(group.key),
-    },
-    h('span', { class: 'day-chevron' }),
-    h('span', { class: 'day-label' }, dayLabel(group.first)),
-    h('span', { class: 'day-count' }, `${n} message${n === 1 ? '' : 's'}`),
-    !open && urgent ? h('span', { class: 'day-flag is-urgent' }, `${urgent} urgent`) : null,
-    !open && fresh ? h('span', { class: 'day-flag is-new' }, `${fresh} new`) : null,
+    'div',
+    { class: ['day', open && 'is-open'] },
+    h(
+      'div',
+      { class: 'day-bar' },
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'day-toggle',
+          'aria-expanded': String(open),
+          title: open ? 'Click to fold this day away' : 'Click to show these messages',
+          onclick: () => toggleDay(group.key),
+        },
+        h('span', { class: 'day-chevron' }),
+        h('span', { class: 'day-label' }, dayLabel(group.first)),
+        h('span', { class: 'day-count' }, `${n} message${n === 1 ? '' : 's'}`),
+        !open && urgent ? h('span', { class: 'day-flag is-urgent' }, `${urgent} urgent`) : null,
+        !open && fresh ? h('span', { class: 'day-flag is-new' }, `${fresh} new`) : null,
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'day-delete',
+          title: `Delete ${dayLabel(group.first)}’s messages`,
+          'aria-label': `Delete ${dayLabel(group.first)}’s messages`,
+          onclick: (e) => toggleDayDeleteChoices(e.currentTarget.closest('.day-group'), group),
+        },
+        icon('trash'),
+      ),
+    ),
   );
 }
 
+/** Shows (or hides) the "Delete Yesterday's messages: For me / Ours for everyone" row. */
+function toggleDayDeleteChoices(section, group) {
+  const open = section.querySelector('.day-confirm');
+  for (const row of el.list.querySelectorAll('.day-confirm')) row.remove();
+  if (open) return;
+  const me = state.settings.department;
+  const ours = group.messages.some((m) => m.from === me);
+  const label = dayLabel(group.first);
+  const name = label === 'Today' || label === 'Yesterday' ? label.toLowerCase() : label;
+  const row = h(
+    'div',
+    { class: 'day-confirm' },
+    h('span', { class: 'msg-confirm-label' }, `Delete ${name}’s messages`),
+    h('button', { type: 'button', class: 'chip', onclick: () => deleteDay(group, 'me') }, 'For me'),
+    ours
+      ? h(
+          'button',
+          { type: 'button', class: ['chip', 'is-danger'], onclick: () => deleteDay(group, 'everyone') },
+          'Ours for everyone',
+        )
+      : null,
+    h('button', { type: 'button', class: 'chip is-quiet', onclick: () => row.remove() }, 'Cancel'),
+    h(
+      'span',
+      { class: 'msg-confirm-hint' },
+      ours
+        ? `“For me” hides all of them on this computer. “Ours for everyone” removes the ones ${deptLabel(me)} sent, from every computer.`
+        : `Hides all of them on this computer. Only the departments that sent them can delete them for everyone.`,
+    ),
+  );
+  section.querySelector('.day').append(row);
+  row.querySelector('button').focus();
+}
+
+/** Deletes every message shown under a day's banner (respecting the current tab and search). */
+async function deleteDay(group, scope) {
+  try {
+    const { ids } = await okv.deleteDay({ ...dayBounds(group.first), scope, filter: state.filter, search: state.search });
+    if (!ids.length) {
+      toast('Nothing to delete');
+      return;
+    }
+    const n = `${ids.length} message${ids.length === 1 ? '' : 's'}`;
+    toast(scope === 'me' ? `${n} deleted on this computer` : `${n} deleted for everyone`, {
+      label: 'Undo',
+      run: () => okv.undoDeleteMany({ ids, scope }).catch(() => toast('Couldn’t undo that')),
+    });
+  } catch {
+    toast('Couldn’t delete those messages');
+  }
+}
+
 /**
- * Redraws the message list. `anchorDay` keeps that day's header where it was
+ * Redraws the message list. `anchorDay` keeps that day's banner where it was
  * on screen (used when a day is opened or folded).
  */
 function renderList({ toBottom = false, keepTop = false, anchorDay = null } = {}) {
@@ -578,20 +661,28 @@ function renderList({ toBottom = false, keepTop = false, anchorDay = null } = {}
   const gapBelow = list.scrollHeight - list.scrollTop - list.clientHeight;
   const oldTop = list.scrollTop;
   const oldHeight = list.scrollHeight;
-  const anchor = anchorDay && list.querySelector(`[data-day="${anchorDay}"]`);
-  const anchorOffset = anchor ? anchor.offsetTop - list.scrollTop : null;
+  // Where the banner appears on screen right now (it may be stuck to the top).
+  const anchor = anchorDay && list.querySelector(`.day-group[data-day="${anchorDay}"] .day`);
+  const anchorOffset = anchor ? anchor.getBoundingClientRect().top - list.getBoundingClientRect().top : null;
 
   const nodes = [];
   if (state.more) nodes.push(h('button', { type: 'button', class: ['link-btn', 'older'], onclick: loadOlder }, 'Show older messages'));
   if (!state.messages.length) nodes.push(emptyNode());
   for (const group of groupByDay(state.messages)) {
     const open = isDayOpen(group.key);
-    nodes.push(dayHeader(group, open));
-    if (open) nodes.push(...group.messages.map(messageNode));
+    nodes.push(
+      h(
+        'section',
+        { class: 'day-group', 'data-day': group.key },
+        dayHeader(group, open),
+        ...(open ? group.messages.map(messageNode) : []),
+      ),
+    );
   }
   list.replaceChildren(...nodes);
 
-  const newAnchor = anchorOffset !== null && list.querySelector(`[data-day="${anchorDay}"]`);
+  // Put the banner back where it was, measured from its day's (non-sticky) start.
+  const newAnchor = anchorOffset !== null && list.querySelector(`.day-group[data-day="${anchorDay}"]`);
   if (newAnchor) {
     list.scrollTop = newAnchor.offsetTop - anchorOffset;
   } else if (toBottom || gapBelow < 60) {

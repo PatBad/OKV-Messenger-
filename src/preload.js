@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('okv', {
   sendMessage: (message) => ipcRenderer.invoke('send-message', message),
   deleteMessage: (target) => ipcRenderer.invoke('delete-message', target),
   undoDelete: (target) => ipcRenderer.invoke('undo-delete', target),
+  deleteDay: (day) => ipcRenderer.invoke('delete-day', day),
+  undoDeleteMany: (batch) => ipcRenderer.invoke('undo-delete-many', batch),
   react: (reaction) => ipcRenderer.invoke('react', reaction),
   setDepartment: (department) => ipcRenderer.invoke('set-department', department),
   setSettings: (values) => ipcRenderer.invoke('set-settings', values),
