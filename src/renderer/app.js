@@ -51,6 +51,21 @@ const el = {
   updateBtn: $('update-btn'),
   openData: $('open-data'),
   toast: $('toast'),
+  sections: $('sections'),
+  badgeReminders: $('badge-reminders'),
+  reminders: $('screen-reminders'),
+  remFilters: $('rem-filters'),
+  remClear: $('rem-clear'),
+  remList: $('rem-list'),
+  remCompose: $('rem-compose'),
+  remTo: $('rem-to'),
+  remName: $('rem-name'),
+  remNames: $('rem-names'),
+  remText: $('rem-text'),
+  remAdd: $('rem-add'),
+  remDueOn: $('rem-due-on'),
+  remDue: $('rem-due'),
+  remError: $('rem-error'),
   toastText: $('toast-text'),
   toastAction: $('toast-action'),
 };
@@ -74,6 +89,11 @@ const state = {
   // Days the user has opened or closed (dayKey -> open). Otherwise only today is open.
   dayOpen: new Map(),
   reactionChoices: [],
+  section: 'board', // which of 'board' / 'reminders' the panel shows
+  remFilter: 'for-us',
+  reminderList: [],
+  remSummary: { open: 0, overdue: 0, unseen: 0, unseenDue: false },
+  remSending: false,
 };
 
 // ---------- Helpers ----------
@@ -123,6 +143,17 @@ const ICONS = {
   trash:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg>',
 };
+// Reactions drawn as pictures rather than emoji characters (token → file and name).
+const CUSTOM_REACTIONS = {
+  ':dead-inside:': { src: '../../assets/reactions/dead-inside.svg', name: 'Dead inside' },
+};
+function reactionGlyph(emoji, size) {
+  const custom = CUSTOM_REACTIONS[emoji];
+  if (!custom) return document.createTextNode(emoji);
+  return h('img', { class: 'reaction-img', src: custom.src, alt: custom.name, width: size, height: size, draggable: 'false' });
+}
+const reactionName = (emoji) => (CUSTOM_REACTIONS[emoji] ? CUSTOM_REACTIONS[emoji].name : emoji);
+
 function icon(name) {
   const t = document.createElement('template');
   t.innerHTML = ICONS[name];
@@ -196,7 +227,7 @@ function applyView({ expanded, origin, lastReadAt }) {
   if (origin) $('panel').style.transformOrigin = origin;
   if (opening) {
     state.newSince = lastReadAt || 0;
-    showScreen(state.settings.department ? 'board' : 'onboarding');
+    showScreen(state.settings.department ? state.section : 'onboarding');
     refresh({ toBottom: true });
     if (state.screen === 'board') el.text.focus();
     okv.markRead();
@@ -266,10 +297,16 @@ el.collapse.addEventListener('click', () => setExpanded(false));
 // ---------- Badge ----------
 
 function renderBadge() {
-  const n = state.unread;
+  const rem = state.remSummary;
+  const n = state.unread + rem.unseen;
   el.badge.hidden = n === 0;
   el.badge.textContent = n > 99 ? '99+' : String(n);
-  el.bubble.classList.toggle('has-urgent', n > 0 && state.hasUrgentUnread);
+  el.bubble.classList.toggle('has-urgent', (state.unread > 0 && state.hasUrgentUnread) || rem.unseenDue);
+  // Reminders tab: how many are open for us, red when any are overdue.
+  el.badgeReminders.hidden = rem.open === 0;
+  el.badgeReminders.textContent = String(rem.open);
+  el.badgeReminders.classList.toggle('is-overdue', rem.overdue > 0);
+  el.badgeReminders.title = rem.overdue ? `${rem.open} open, ${rem.overdue} overdue` : `${rem.open} open`;
   el.bubble.setAttribute('aria-label', n ? `Open OKV Messenger, ${n} new` : 'Open OKV Messenger');
   el.bubble.title = n ? `OKV Messenger – ${n} new` : 'OKV Messenger';
 }
@@ -299,15 +336,30 @@ function renderHeader() {
 
 function showScreen(name) {
   state.screen = name;
+  const section = name === 'board' || name === 'reminders';
+  if (section) state.section = name;
   el.onboarding.hidden = name !== 'onboarding';
   el.board.hidden = name !== 'board';
+  el.reminders.hidden = name !== 'reminders';
   el.settings.hidden = name !== 'settings';
+  el.sections.hidden = !section;
+  for (const b of el.sections.querySelectorAll('button')) b.setAttribute('aria-selected', String(b.dataset.section === name));
   if (name === 'settings') renderSettings();
   if (name === 'board') {
     renderList({ toBottom: true });
     el.text.focus();
   }
+  if (name === 'reminders') {
+    refreshReminders();
+    if (state.expanded) okv.markRemindersSeen();
+    el.remText.focus();
+  }
 }
+
+el.sections.addEventListener('click', (e) => {
+  const button = e.target.closest('button[data-section]');
+  if (button) showScreen(button.dataset.section);
+});
 
 function deptButtons(container, compact) {
   container.replaceChildren(
@@ -332,6 +384,7 @@ async function chooseDepartment(id) {
   state.settings = await okv.setDepartment(id);
   renderHeader();
   renderComposeTargets();
+  renderReminderTargets();
   if (firstTime) {
     showScreen('board');
     toast(`This computer now sends as ${deptLabel(id)}`);
@@ -402,11 +455,11 @@ function messageNode(m) {
           {
             type: 'button',
             class: ['msg-react', on && 'is-on'],
-            title: on ? `Remove your ${emoji}` : `React with ${emoji}`,
+            title: on ? `Remove your ${reactionName(emoji)}` : `React with ${reactionName(emoji)}`,
             'aria-pressed': String(on),
             onclick: () => react(m, emoji),
           },
-          emoji,
+          reactionGlyph(emoji, 20),
         );
       }),
       h('span', { class: 'msg-actions-sep' }),
@@ -447,10 +500,10 @@ function reactionsNode(m) {
         {
           type: 'button',
           class: ['reaction', mine && 'is-mine'],
-          title: mine ? `Click to remove your ${r.emoji}` : `Click to react with ${r.emoji} too`,
+          title: mine ? `Click to remove your ${reactionName(r.emoji)}` : `Click to react with ${reactionName(r.emoji)} too`,
           onclick: () => react(m, r.emoji),
         },
-        h('span', { class: 'reaction-emoji' }, r.emoji),
+        h('span', { class: 'reaction-emoji' }, reactionGlyph(r.emoji, 15)),
         h('span', { class: 'reaction-who' }, names.join(', ')),
       );
     }),
@@ -817,6 +870,209 @@ el.compose.addEventListener('submit', async (e) => {
   }
 });
 
+// ---------- Reminders ----------
+
+const shortDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+
+/** "3:00 pm" today, otherwise "Mon 28 Sep, 3:00 pm". */
+function whenLabel(ts) {
+  return dayKey(ts) === dayKey(Date.now()) ? timeFmt.format(ts) : `${shortDayFmt.format(ts)}, ${timeFmt.format(ts)}`;
+}
+
+/** "Due 3:00 pm", "Due tomorrow 9:00 am", "Overdue · was due 3:00 pm". */
+function dueLabel(dueAt) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const that = new Date(dueAt);
+  that.setHours(0, 0, 0, 0);
+  const days = Math.round((that - today) / 86400000);
+  const time = timeFmt.format(dueAt);
+  const when = days === 0 ? time : days === 1 ? `tomorrow ${time}` : days === -1 ? `yesterday ${time}` : `${shortDayFmt.format(dueAt)}, ${time}`;
+  return dueAt <= Date.now() ? `Overdue · was due ${when}` : `Due ${when}`;
+}
+
+function renderReminderTargets() {
+  const current = el.remTo.value;
+  el.remTo.replaceChildren(...state.departments.map((d) => h('option', { value: d.id }, d.label)));
+  // Reminders are usually for another department, so default to the first one that isn't ours.
+  const other = state.departments.find((d) => d.id !== state.settings.department) || state.departments[0];
+  el.remTo.value = current || (other ? other.id : '');
+  loadNameSuggestions();
+}
+
+async function loadNameSuggestions() {
+  const names = await okv.reminderNames(el.remTo.value);
+  el.remNames.replaceChildren(...names.map((n) => h('option', { value: n })));
+}
+
+async function refreshReminders() {
+  if (!state.settings.department) return;
+  state.reminderList = await okv.listReminders({ view: state.remFilter });
+  renderReminders();
+}
+
+function renderReminders() {
+  const list = el.remList;
+  const top = list.scrollTop;
+  el.remClear.hidden = state.remFilter !== 'done' || !state.reminderList.length;
+  list.replaceChildren(...(state.reminderList.length ? state.reminderList.map(reminderNode) : [remindersEmpty()]));
+  list.scrollTop = top;
+}
+
+function remindersEmpty() {
+  const text = {
+    'for-us': [`Nothing for ${deptLabel(state.settings.department)}`, 'Reminders set for your team appear here until they’re done.'],
+    sent: ['No open reminders sent', 'Reminders you set for other people appear here until they deal with them.'],
+    all: ['No open reminders', 'Add one below: pick who it’s for, write it, and optionally set a due time.'],
+    done: ['Nothing done yet', 'Reminders that are done or cancelled appear here.'],
+  }[state.remFilter];
+  return h('div', { class: 'empty' }, h('strong', null, text[0]), text[1]);
+}
+
+function reminderNode(r) {
+  const me = state.settings.department;
+  const now = Date.now();
+  const open = r.state === 'open';
+  const overdue = open && r.dueAt !== null && r.dueAt <= now;
+  const soon = open && r.dueAt !== null && !overdue && r.dueAt - now < 3600e3;
+  const forUs = r.to === me;
+  const fromUs = r.from === me;
+
+  const actions = [];
+  if (open && forUs) actions.push(h('button', { type: 'button', class: 'chip is-done', onclick: () => changeReminder(r, 'done') }, '✓ Done'));
+  if (open && fromUs) actions.push(h('button', { type: 'button', class: 'chip is-quiet', onclick: () => changeReminder(r, 'cancelled') }, 'Cancel'));
+  if (!open && (forUs || fromUs)) actions.push(h('button', { type: 'button', class: 'chip is-quiet', onclick: () => changeReminder(r, 'open') }, 'Reopen'));
+
+  const meta = open
+    ? `From ${deptLabel(r.from)}${r.author ? ` · ${r.author}` : ''} · ${whenLabel(r.createdAt)}`
+    : `${r.state === 'done' ? 'Done' : 'Cancelled'} by ${deptLabel(r.closed.by)}${r.closed.name ? ` · ${r.closed.name}` : ''} · ${whenLabel(r.closed.at)}`;
+
+  return h(
+    'article',
+    { class: ['rem', `dept-${r.to}`, overdue && 'is-overdue', soon && 'is-soon', !open && 'is-closed'] },
+    h(
+      'header',
+      { class: 'rem-head' },
+      h('span', { class: 'rem-name' }, r.name || deptLabel(r.to)),
+      r.name ? h('span', { class: 'rem-dept' }, deptLabel(r.to)) : null,
+      open && r.dueAt !== null ? h('span', { class: 'rem-due', title: fullFmt.format(r.dueAt) }, dueLabel(r.dueAt)) : null,
+    ),
+    h('p', { class: 'rem-text' }, r.text),
+    h('footer', { class: 'rem-foot' }, h('span', { class: 'rem-meta' }, meta), ...actions),
+  );
+}
+
+async function changeReminder(r, status) {
+  try {
+    await okv.setReminderStatus({ id: r.id, status });
+    // The list refreshes itself when the main process reports the change.
+    if (status !== 'open') {
+      toast(status === 'done' ? 'Marked as done' : 'Reminder cancelled', {
+        label: 'Undo',
+        run: () => okv.setReminderStatus({ id: r.id, status: 'open' }).catch(() => toast('Couldn’t undo that')),
+      });
+    }
+  } catch {
+    toast('Couldn’t update that reminder');
+  }
+}
+
+el.remFilters.addEventListener('click', (e) => {
+  const button = e.target.closest('button[data-rfilter]');
+  if (!button) return;
+  state.remFilter = button.dataset.rfilter;
+  for (const b of el.remFilters.querySelectorAll('button')) b.setAttribute('aria-selected', String(b === button));
+  refreshReminders();
+});
+
+el.remClear.addEventListener('click', async () => {
+  await okv.clearDoneReminders();
+  toast('Done list cleared on this computer');
+});
+
+// --- adding a reminder ---
+
+/** yyyy-mm-ddThh:mm in local time, as a datetime-local input wants it. */
+function toLocalInput(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function growTextarea(t) {
+  t.style.height = 'auto';
+  t.style.height = `${Math.min(t.scrollHeight + 2, 132)}px`;
+}
+
+function updateRemAddState() {
+  el.remAdd.disabled = state.remSending || !el.remText.value.trim();
+}
+
+el.remTo.addEventListener('change', loadNameSuggestions);
+el.remText.addEventListener('input', () => {
+  growTextarea(el.remText);
+  updateRemAddState();
+  el.remError.hidden = true;
+});
+el.remText.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    el.remCompose.requestSubmit();
+  }
+});
+el.remDueOn.addEventListener('change', () => {
+  el.remDue.hidden = !el.remDueOn.checked;
+  if (el.remDueOn.checked) {
+    // Suggest an hour from now, on the quarter hour.
+    if (!el.remDue.value) el.remDue.value = toLocalInput(Math.ceil((Date.now() + 3600e3) / 900e3) * 900e3);
+    el.remDue.focus();
+  }
+});
+
+el.remCompose.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = el.remText.value.trim();
+  if (!text || state.remSending) return;
+  let dueAt = null;
+  if (el.remDueOn.checked) {
+    dueAt = el.remDue.value ? new Date(el.remDue.value).getTime() : NaN; // datetime-local values are local time
+    if (!Number.isFinite(dueAt)) {
+      el.remError.textContent = 'Pick a due date and time, or untick Due.';
+      el.remError.hidden = false;
+      return;
+    }
+  }
+  state.remSending = true;
+  updateRemAddState();
+  try {
+    const to = el.remTo.value;
+    const name = el.remName.value.trim();
+    await okv.addReminder({ to, name, text, dueAt });
+    el.remText.value = '';
+    el.remName.value = '';
+    el.remDueOn.checked = false;
+    el.remDue.hidden = true;
+    el.remDue.value = '';
+    growTextarea(el.remText);
+    // Let them know it was added if the current tab won't show it.
+    const shown = state.remFilter === 'all' || state.remFilter === 'sent' || (state.remFilter === 'for-us' && to === state.settings.department);
+    if (!shown) toast(`Reminder added for ${name || deptLabel(to)}`);
+    loadNameSuggestions();
+  } catch {
+    el.remError.textContent = 'Reminder not added. Please try again.';
+    el.remError.hidden = false;
+  } finally {
+    state.remSending = false;
+    updateRemAddState();
+    el.remText.focus();
+  }
+});
+
+// Keep "due in…" labels and overdue highlighting current while the list is open.
+setInterval(() => {
+  if (state.expanded && state.screen === 'reminders') renderReminders();
+}, 30000);
+
 // ---------- Settings ----------
 
 function renderSettings() {
@@ -873,7 +1129,7 @@ el.updateBtn.addEventListener('click', () => okv.updateAction(state.update.state
 el.bannerBtn.addEventListener('click', () => okv.updateAction('install'));
 el.openData.addEventListener('click', () => okv.openDataFolder());
 el.openSettings.addEventListener('click', () => showScreen('settings'));
-el.closeSettings.addEventListener('click', () => showScreen('board'));
+el.closeSettings.addEventListener('click', () => showScreen(state.section));
 el.optSound.addEventListener('change', async () => {
   state.settings = await okv.setSettings({ sound: el.optSound.checked });
   if (state.settings.sound) chime(false);
@@ -888,7 +1144,7 @@ document.addEventListener('keydown', (e) => {
   if (!state.expanded) return;
   if (e.key === 'Escape') {
     if (!el.searchBox.hidden) closeSearch();
-    else if (state.screen === 'settings') showScreen('board');
+    else if (state.screen === 'settings') showScreen(state.section);
     else if (state.settings.department) setExpanded(false);
     e.preventDefault();
   } else if (e.key === 'f' && e.ctrlKey && state.screen === 'board') {
@@ -920,10 +1176,23 @@ okv.onMessagesChanged(() => {
   if (state.settings.department) refresh();
 });
 
-okv.onUnread(({ count, urgent }) => {
+okv.onUnread(({ count, urgent, reminders }) => {
   state.unread = count;
   state.hasUrgentUnread = urgent;
+  state.remSummary = reminders;
   renderBadge();
+});
+
+// A reminder was added, changed or fell due, here or on another computer.
+okv.onRemindersChanged(({ alert }) => {
+  if (alert) {
+    chime(alert === 'urgent');
+    if (!state.expanded) bump();
+  }
+  if (state.screen === 'reminders') {
+    refreshReminders();
+    if (state.expanded) okv.markRemindersSeen();
+  }
 });
 
 okv.onPeers((peers) => {
@@ -950,6 +1219,7 @@ async function init() {
     settings: s.settings,
     unread: s.unread.count,
     hasUrgentUnread: s.unread.urgent,
+    remSummary: s.unread.reminders,
     peers: s.peers,
     update: s.update,
     newSince: s.lastReadAt,
@@ -959,6 +1229,7 @@ async function init() {
   el.author.value = s.settings.author || '';
   deptButtons(el.onboardingDepts, false);
   renderComposeTargets();
+  renderReminderTargets();
   renderHeader();
   renderBadge();
   renderPeers();

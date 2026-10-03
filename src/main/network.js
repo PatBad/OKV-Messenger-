@@ -69,6 +69,7 @@ class Network extends EventEmitter {
     store,
     deletions = null,
     reactions = null,
+    reminders = null,
     peerId,
     getProfile,
     log,
@@ -92,6 +93,9 @@ class Network extends EventEmitter {
     }
     if (reactions) {
       this.collections.push({ name: 'reactions', store: reactions, prefix: '/reactions', key: 'records', beacon: 'r' });
+    }
+    if (reminders) {
+      this.collections.push({ name: 'reminders', store: reminders, prefix: '/reminders', key: 'records', beacon: 'rm' });
     }
     this.store = store;
     this.peerId = peerId;

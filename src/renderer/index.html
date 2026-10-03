@@ -35,6 +35,16 @@
         </button>
       </header>
 
+      <!-- Switch between the message board and reminders -->
+      <nav id="sections" class="sections" role="tablist" aria-label="Section" hidden>
+        <button type="button" role="tab" data-section="board" aria-selected="true">
+          Messages
+        </button>
+        <button type="button" role="tab" data-section="reminders">
+          Reminders <span id="badge-reminders" class="sec-badge" hidden></span>
+        </button>
+      </nav>
+
       <!-- First run -->
       <div id="screen-onboarding" class="screen onboarding" hidden>
         <img class="onboarding-logo" src="../../assets/logo.svg" alt="" draggable="false" />
@@ -90,6 +100,47 @@
             </button>
           </div>
           <p id="compose-error" class="compose-error" role="alert" hidden></p>
+        </form>
+      </div>
+
+      <!-- Reminders -->
+      <div id="screen-reminders" class="screen reminders" hidden>
+        <div class="toolbar">
+          <div id="rem-filters" class="filters" role="tablist" aria-label="Show reminders">
+            <button type="button" role="tab" data-rfilter="for-us" aria-selected="true">For us</button>
+            <button type="button" role="tab" data-rfilter="sent">Sent</button>
+            <button type="button" role="tab" data-rfilter="all">All</button>
+            <button type="button" role="tab" data-rfilter="done">Done</button>
+          </div>
+          <button id="rem-clear" class="link-btn rem-clear" type="button" hidden>Clear done</button>
+        </div>
+        <div class="list-wrap">
+          <div id="rem-list" class="list" tabindex="-1" aria-live="polite"></div>
+        </div>
+        <form id="rem-compose" class="compose" autocomplete="off">
+          <div class="compose-meta">
+            <label class="pill-select">
+              <span>For</span>
+              <select id="rem-to" aria-label="Department"></select>
+            </label>
+            <input id="rem-name" class="author" type="text" maxlength="40" list="rem-names" placeholder="Their name" aria-label="Who it's for" spellcheck="false" />
+            <datalist id="rem-names"></datalist>
+          </div>
+          <div class="compose-row">
+            <textarea id="rem-text" rows="1" maxlength="1000" placeholder="Remind them to…" aria-label="Reminder"></textarea>
+            <button id="rem-add" class="send" type="submit" disabled aria-label="Add reminder" title="Add reminder">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </button>
+          </div>
+          <div class="rem-due-row">
+            <label class="due-toggle">
+              <input id="rem-due-on" type="checkbox" />
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2"/><path d="M5 3 2 6M19 3l3 3"/></svg>
+              Due
+            </label>
+            <input id="rem-due" class="rem-due-input" type="datetime-local" aria-label="Due date and time" hidden />
+          </div>
+          <p id="rem-error" class="compose-error" role="alert" hidden></p>
         </form>
       </div>
 

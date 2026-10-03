@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- "Dead inside": wide vacant stare over heavy eye bags, forced ear-to-ear grin.
+       Drawn to sit alongside Windows 11's emoji style, with bold shapes so it
+       still reads at chip size. -->
+  <defs>
+    <radialGradient id="face" cx="0.36" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#FFEA7C"/>
+      <stop offset="0.45" stop-color="#FFC63E"/>
+      <stop offset="0.8" stop-color="#FB9B27"/>
+      <stop offset="1" stop-color="#F07E1D"/>
+    </radialGradient>
+    <radialGradient id="rim" cx="0.3" cy="0.95" r="0.7">
+      <stop offset="0" stop-color="#F2508C" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#F2508C" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gloss" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="eyeWhite" cx="0.5" cy="0.38" r="0.62">
+      <stop offset="0.72" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E6DCE3"/>
+    </radialGradient>
+    <linearGradient id="bag" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6E2A52" stop-opacity="0.78"/>
+      <stop offset="1" stop-color="#8A3A5E" stop-opacity="0.5"/>
+    </linearGradient>
+    <linearGradient id="teeth" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FDF7FF"/>
+      <stop offset="1" stop-color="#E4D0EE"/>
+    </linearGradient>
+    <clipPath id="mouth">
+      <path d="M20 79 Q64 93 108 79 Q103 111 64 113 Q25 111 20 79 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- face -->
+  <circle cx="64" cy="64" r="60" fill="url(#face)"/>
+  <circle cx="64" cy="64" r="60" fill="url(#rim)"/>
+  <ellipse cx="44" cy="30" rx="32" ry="19" fill="url(#gloss)"/>
+
+  <!-- heavy bags under both eyes -->
+  <path d="M24 54 Q42 88 60 54 Q42 66 24 54 Z" fill="url(#bag)"/>
+  <path d="M68 54 Q86 88 104 54 Q86 66 68 54 Z" fill="url(#bag)"/>
+  <!-- a second, fainter fold below each bag (shows when large) -->
+  <g fill="none" stroke="#7A3258" stroke-width="2.6" stroke-linecap="round" opacity="0.35">
+    <path d="M29 69 Q42 78 55 69"/>
+    <path d="M73 69 Q86 78 99 69"/>
+  </g>
+
+  <!-- wide-open eyes with pinprick pupils: the thousand-yard stare -->
+  <ellipse cx="42" cy="43" rx="14.5" ry="15.5" fill="url(#eyeWhite)"/>
+  <ellipse cx="86" cy="43" rx="14.5" ry="15.5" fill="url(#eyeWhite)"/>
+  <circle cx="42" cy="44" r="4.6" fill="#3B2230"/>
+  <circle cx="86" cy="44" r="4.6" fill="#3B2230"/>
+
+  <!-- the grin: far too wide, teeth clenched -->
+  <path d="M20 79 Q64 93 108 79 Q103 111 64 113 Q25 111 20 79 Z" fill="url(#teeth)"/>
+  <g clip-path="url(#mouth)" fill="none" stroke="#B3158F" stroke-width="3.2" stroke-linecap="round">
+    <path d="M16 96 Q64 106 112 96"/>
+    <path d="M42 85 V114 M64 87 V115 M86 85 V114"/>
+  </g>
+  <path d="M20 79 Q64 93 108 79 Q103 111 64 113 Q25 111 20 79 Z" fill="none" stroke="#B3158F" stroke-width="4.5" stroke-linejoin="round"/>
+</svg>

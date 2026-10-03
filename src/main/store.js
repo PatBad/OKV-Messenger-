@@ -83,6 +83,56 @@ function sanitizeReaction(r) {
   return { v: 1, id, target, emoji, on, by, host, createdAt: Math.floor(createdAt) };
 }
 
+const REMINDER_STATUSES = ['done', 'cancelled', 'open'];
+
+/**
+ * The reminders collection holds two kinds of record:
+ *  - type 'reminder': a reminder from one department to a named person in another
+ *  - type 'status': marking a reminder done, cancelled, or open again (undo)
+ */
+function sanitizeReminderRecord(r) {
+  if (!r || typeof r !== 'object' || !validId(r.id)) return null;
+  const host = r.host ?? '';
+  if (!validHost(host) || !validTime(r.createdAt)) return null;
+  const createdAt = Math.floor(r.createdAt);
+
+  if (r.type === 'reminder') {
+    const { from, to } = r;
+    const name = r.name ?? '';
+    const author = r.author ?? '';
+    const dueAt = r.dueAt ?? null;
+    if (!DEPARTMENT_IDS.includes(from) || !DEPARTMENT_IDS.includes(to)) return null;
+    if (typeof name !== 'string' || name.length > LIMITS.AUTHOR) return null;
+    if (typeof author !== 'string' || author.length > LIMITS.AUTHOR) return null;
+    if (typeof r.text !== 'string') return null;
+    const text = r.text.trim();
+    if (!text || text.length > LIMITS.REMINDER) return null;
+    if (dueAt !== null && !validTime(dueAt)) return null;
+    return {
+      v: 1,
+      type: 'reminder',
+      id: r.id,
+      from,
+      to,
+      name: name.trim(),
+      author: author.trim(),
+      host,
+      text,
+      dueAt: dueAt === null ? null : Math.floor(dueAt),
+      createdAt,
+    };
+  }
+
+  if (r.type === 'status') {
+    const byName = r.byName ?? '';
+    if (!validId(r.target) || !REMINDER_STATUSES.includes(r.status)) return null;
+    if (!DEPARTMENT_IDS.includes(r.by)) return null;
+    if (typeof byName !== 'string' || byName.length > LIMITS.AUTHOR) return null;
+    return { v: 1, type: 'status', id: r.id, target: r.target, status: r.status, by: r.by, byName: byName.trim(), host, createdAt };
+  }
+  return null;
+}
+
 function toWire(record) {
   const { receivedAt, local, ...wire } = record;
   return wire;
@@ -392,11 +442,65 @@ class ReactionLog extends RecordLog {
   }
 }
 
-/** Messages hidden on this computer only ("delete for me"). Never shared. */
-class LocalHides {
+/** Reminders and their done/cancelled/reopened history, shared between computers. */
+class ReminderLog extends RecordLog {
   constructor(dir) {
+    super(dir, 'reminders.jsonl', sanitizeReminderRecord);
+    this.reminders = new Map();
+    this.statuses = new Map();
+  }
+
+  _track(record) {
+    if (record.type === 'reminder') {
+      this.reminders.set(record.id, record);
+      return;
+    }
+    const list = this.statuses.get(record.target);
+    if (list) list.push(record);
+    else this.statuses.set(record.target, [record]);
+  }
+
+  all() {
+    return [...this.reminders.values()];
+  }
+
+  /**
+   * The reminder's current state: the latest status record that department
+   * was allowed to make, or null if it's still open. Only the recipient's
+   * department can mark it done, only the sender's can cancel it, and either
+   * can reopen it.
+   */
+  status(reminder) {
+    let latest = null;
+    for (const s of this.statuses.get(reminder.id) || []) {
+      const allowed =
+        (s.status === 'done' && s.by === reminder.to) ||
+        (s.status === 'cancelled' && s.by === reminder.from) ||
+        (s.status === 'open' && (s.by === reminder.to || s.by === reminder.from));
+      if (allowed && (!latest || compareRecords(s, latest) > 0)) latest = s;
+    }
+    return latest && latest.status !== 'open' ? latest : null;
+  }
+
+  /** Names reminders have been addressed to in a department, most recent first. */
+  namesFor(department) {
+    const names = [];
+    const seen = new Set();
+    for (const r of [...this.reminders.values()].sort((a, b) => compareRecords(b, a))) {
+      const key = r.name.toLowerCase();
+      if (r.to !== department || !r.name || seen.has(key)) continue;
+      seen.add(key);
+      names.push(r.name);
+    }
+    return names;
+  }
+}
+
+/** Items hidden on this computer only ("delete for me", clearing done reminders). Never shared. */
+class LocalHides {
+  constructor(dir, fileName = 'hidden.jsonl') {
     this.dir = dir;
-    this.file = path.join(dir, 'hidden.jsonl');
+    this.file = path.join(dir, fileName);
     this.ids = new Set();
   }
 
@@ -453,10 +557,12 @@ module.exports = {
   MessageStore,
   DeletionLog,
   ReactionLog,
+  ReminderLog,
   LocalHides,
   sanitizeMessage,
   sanitizeDeletion,
   sanitizeReaction,
+  sanitizeReminderRecord,
   toWire,
   dayKey,
   isUnread,

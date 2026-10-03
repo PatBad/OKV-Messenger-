@@ -19,11 +19,13 @@ There is no server and no internet requirement. Every computer keeps its own com
 | Send to one department | Choose it in the **To** box (default is Everyone) |
 | Flag something urgent | Click **Urgent** before sending; it plays a louder alert and shows in red |
 | Filter | **All**, **For us** (sent directly to your department), **From us**, **Urgent** |
-| React to a message | Point at it and click 👌 👍 😂 😅. Reactions show under the message on every computer, e.g. "👍 You, Reception". Click your reaction again to take it back |
+| React to a message | Point at it and click 👌 👍 😂 😅 or the custom “Dead inside” face. Reactions show under the message on every computer, e.g. "👍 You, Reception". Click your reaction again to take it back |
 | Delete a message | Point at it and click the bin. **For me** hides it on this computer only. **For everyone** removes it from every computer, and is only offered for messages your department sent. **Undo** appears for a few seconds afterwards |
 | Tidy up earlier days | Earlier days are folded into one banner each (showing how many messages, urgent and new ones it holds). Click a banner to open or fold that day. An open day's banner stays pinned at the top while you scroll through it |
 | Delete a whole day | Point at a day's banner and click its bin. **For me** hides all of that day's messages on this computer; **Ours for everyone** removes the ones your department sent from every computer. It only deletes what's shown under the banner, so in the **Urgent** tab it only deletes that day's urgent messages. **Undo** appears afterwards |
 | Search | Magnifying glass, or **Ctrl+F** |
+| Set a reminder for someone | Switch to **Reminders**, pick their department, type their name (names used before are suggested), write the reminder and optionally tick **Due** to set a time. It stays until it’s dealt with |
+| Deal with a reminder | Reminders for your department appear under **For us** (the tab shows how many are open, red if any are overdue). When one falls due, that department’s computers chime and the logo pulses. Click **✓ Done** when it’s handled; the department that sent it can **Cancel** it instead. Closed reminders move to **Done**, which you can clear on your own computer |
 | Settings / Quit | Gear icon in the board, or right-click the OKV icon in the Windows system tray |
 
 The first time it runs, the app asks which department the computer belongs to. You can change this later in Settings.
@@ -44,7 +46,7 @@ The installer puts the app in the current Windows user's profile, so future upda
 - A computer that was switched off catches up automatically the next time it starts, as long as any other computer that has the messages is on.
 - Messages are only accepted from private network addresses (192.168.x.x, 10.x.x.x, 172.16–31.x.x).
 
-"Delete for everyone" and reactions travel between computers the same way messages do, so a computer that was off catches up when it starts.
+"Delete for everyone", reactions and reminders travel between computers the same way messages do, so a computer that was off catches up when it starts.
 
 Each computer stores its history in `%APPDATA%\OKV Messenger\history\messages.jsonl`. Deleting never removes a message from that file: deletions are recorded separately (`deletions.jsonl` for everyone, `hidden.jsonl` for this computer only) and the message is just hidden from the board. Settings > "Open message history folder" opens it. Back up that file to keep a permanent copy.
 
@@ -108,13 +110,14 @@ $env:OKV_DATA_DIR = "$PWD\.dev-data\b"; $env:OKV_BIND = "127.0.0.1"; $env:OKV_UD
 
 ```
 src/main/main.js       Window (expand/collapse, drag, always on top), tray, IPC
-src/main/store.js      Message history on disk + validation + fingerprints for sync
+src/main/store.js      History on disk (messages, deletions, reactions, reminders) + validation + sync fingerprints
 src/main/network.js    Peer discovery (UDP) and sync (HTTP) between computers
 src/main/updater.js    Auto-update from GitHub Releases
 src/main/config.js     Per-computer settings (department, icon position, …)
 src/preload.js         The safe bridge between the window and the main process
 src/renderer/          The interface (HTML/CSS/JS, no framework)
 build/installer.nsh    Adds the Windows Firewall rules during first install
+assets/reactions/      Custom reaction pictures (e.g. "Dead inside")
 test/                  node:test suites
 ```
 

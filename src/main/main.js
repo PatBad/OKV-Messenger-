@@ -6,7 +6,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { DEPARTMENTS, DEPARTMENT_IDS, REACTIONS, LIMITS } = require('./constants');
 const { Config } = require('./config');
-const { MessageStore, DeletionLog, ReactionLog, LocalHides, toWire, isUnread } = require('./store');
+const { MessageStore, DeletionLog, ReactionLog, ReminderLog, LocalHides, toWire, isUnread } = require('./store');
 const { Network } = require('./network');
 const { Updater } = require('./updater');
 const { createLogger } = require('./logger');
@@ -34,6 +34,9 @@ let store;
 let deletions; // "delete for everyone", shared with the other computers
 let hides; // "delete for me", this computer only
 let reactions; // emoji reactions, shared with the other computers
+let reminders; // reminders and their done/cancelled history, shared
+let reminderHides; // done reminders cleared from this computer's Done list
+let dueCheckedUntil = Date.now(); // reminders due before this have already chimed
 let network = null;
 let updater = null;
 let log;
@@ -69,10 +72,13 @@ async function start() {
   deletions = new DeletionLog(historyDir).load();
   hides = new LocalHides(historyDir).load();
   reactions = new ReactionLog(historyDir).load();
+  reminders = new ReminderLog(historyDir).load();
+  reminderHides = new LocalHides(historyDir, 'hidden-reminders.jsonl').load();
   log.info(`loaded ${store.count} messages, ${deletions.count} deletions`);
   store.on('added', onMessagesAdded);
   deletions.on('added', onMessagesChanged);
   reactions.on('added', onMessagesChanged);
+  reminders.on('added', onRemindersAdded);
 
   applyAutoStart();
   createWindow();
@@ -88,6 +94,7 @@ async function start() {
     store,
     deletions,
     reactions,
+    reminders,
     peerId: config.get('peerId'),
     getProfile: () => ({ department: config.get('department'), host: HOST }),
     log,
@@ -104,6 +111,9 @@ async function start() {
   }
 
   updater.start();
+
+  // Chime on the recipient's computers when a reminder falls due.
+  setInterval(checkDueReminders, 15000);
 
   screen.on('display-removed', keepOnScreen);
   screen.on('display-metrics-changed', keepOnScreen);
@@ -292,7 +302,8 @@ function refreshTray() {
   if (!tray) return;
   const dept = DEPARTMENTS.find((d) => d.id === config.get('department'));
   const update = updater ? updater.status : { state: 'dev' };
-  const unreadNow = unread().count;
+  const summary = unread();
+  const unreadNow = summary.count + summary.reminders.unseen;
   tray.setToolTip(unreadNow ? `OKV Messenger – ${unreadNow} new` : 'OKV Messenger');
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -339,9 +350,11 @@ function unreadContext() {
   };
 }
 
+/** Unread messages plus reminders needing attention, for the badge, pulse and tabs. */
 function unread() {
-  if (!store || !config.get('department')) return { count: 0, urgent: false };
-  return store.unread({ ...unreadContext(), exclude: isRemoved });
+  const empty = { count: 0, urgent: false, reminders: { open: 0, overdue: 0, unseen: 0, unseenDue: false } };
+  if (!store || !config.get('department')) return empty;
+  return { ...store.unread({ ...unreadContext(), exclude: isRemoved }), reminders: reminderSummary() };
 }
 
 function sendUnread() {
@@ -358,6 +371,91 @@ function onMessagesAdded(added) {
 }
 
 /** Something other than a new message changed what's on the board (a deletion). */
+// ---------- Reminders ----------
+
+/** A reminder as the page sees it, with its current state worked out. */
+function reminderView(r) {
+  const s = reminders.status(r);
+  return {
+    ...toWire(r),
+    local: Boolean(r.local),
+    state: s ? s.status : 'open',
+    closed: s ? { by: s.by, name: s.byName, at: s.createdAt } : null,
+  };
+}
+
+/** Open reminders for this department: how many, how many overdue, and how many need noticing. */
+function reminderSummary() {
+  const department = config.get('department');
+  const seenAt = config.get('remindersSeenAt') || 0;
+  const since = config.get('firstRunAt');
+  const now = Date.now();
+  let open = 0;
+  let overdue = 0;
+  let unseen = 0;
+  let unseenDue = false;
+  for (const r of reminders.all()) {
+    if (r.to !== department || reminders.status(r)) continue;
+    open++;
+    const due = r.dueAt !== null && r.dueAt <= now;
+    if (due) overdue++;
+    const isNew = !r.local && r.receivedAt > seenAt && r.createdAt >= since;
+    const fellDue = due && r.dueAt > seenAt;
+    if (isNew || fellDue) unseen++;
+    if (fellDue) unseenDue = true;
+  }
+  return { open, overdue, unseen, unseenDue };
+}
+
+function onRemindersAdded(added) {
+  const department = config.get('department');
+  const since = config.get('firstRunAt');
+  const fresh = added.some((r) => r.type === 'reminder' && !r.local && r.to === department && r.createdAt >= since);
+  send('reminders-changed', { alert: fresh ? 'normal' : null });
+  sendUnread();
+}
+
+function checkDueReminders() {
+  const department = config.get('department');
+  const now = Date.now();
+  const nowDue = reminders
+    .all()
+    .filter((r) => r.to === department && r.dueAt !== null && r.dueAt > dueCheckedUntil && r.dueAt <= now && !reminders.status(r));
+  dueCheckedUntil = now;
+  if (!nowDue.length) return;
+  log.info(`${nowDue.length} reminder(s) now due`);
+  send('reminders-changed', { alert: 'urgent' });
+  sendUnread();
+}
+
+/** Adds a status record (done / cancelled / open again) after checking this department may make it. */
+function setReminderStatus(id, status) {
+  const r = typeof id === 'string' ? reminders.reminders.get(id) : null;
+  if (!r) throw new Error('Reminder not found');
+  const department = config.get('department');
+  const allowed =
+    (status === 'done' && department === r.to) ||
+    (status === 'cancelled' && department === r.from) ||
+    (status === 'open' && (department === r.to || department === r.from));
+  if (!allowed) throw new Error('Your department can’t do that to this reminder');
+  const [record] = reminders.add(
+    [
+      {
+        type: 'status',
+        id: crypto.randomUUID(),
+        target: id,
+        status,
+        by: department,
+        byName: config.get('author') || '',
+        host: HOST,
+        createdAt: Date.now(),
+      },
+    ],
+    { local: true },
+  );
+  if (record && network) network.pushNow([toWire(record)], 'reminders');
+}
+
 function onMessagesChanged() {
   send('messages-changed');
   sendUnread();
@@ -505,6 +603,84 @@ ipcMain.handle('set-expanded', (_e, value) => setExpanded(!!value));
 
 ipcMain.handle('mark-read', () => {
   config.set({ lastReadAt: Date.now() });
+  sendUnread();
+});
+
+ipcMain.handle('reminders-list', (_e, { view } = {}) => {
+  const department = config.get('department');
+  const items = reminders
+    .all()
+    .filter((r) => !reminderHides.has(r.id))
+    .map(reminderView);
+  if (view === 'done') {
+    return items
+      .filter((r) => r.state !== 'open' && (r.to === department || r.from === department))
+      .sort((a, b) => b.closed.at - a.closed.at);
+  }
+  return items
+    .filter((r) => r.state === 'open')
+    .filter((r) => (view === 'for-us' ? r.to === department : view === 'sent' ? r.from === department : true))
+    .sort((a, b) => {
+      // Reminders with a due time first, soonest (or most overdue) at the top; then the rest, newest first.
+      if ((a.dueAt === null) !== (b.dueAt === null)) return a.dueAt === null ? 1 : -1;
+      if (a.dueAt !== null) return a.dueAt - b.dueAt;
+      return b.createdAt - a.createdAt;
+    });
+});
+
+ipcMain.handle('reminder-add', (_e, input = {}) => {
+  const department = config.get('department');
+  if (!department) throw new Error('Choose a department first');
+  const [record] = reminders.add(
+    [
+      {
+        type: 'reminder',
+        id: crypto.randomUUID(),
+        from: department,
+        to: input.to,
+        name: typeof input.name === 'string' ? input.name.trim().slice(0, LIMITS.AUTHOR) : '',
+        author: config.get('author') || '',
+        host: HOST,
+        text: input.text,
+        dueAt: Number.isFinite(input.dueAt) ? input.dueAt : null,
+        createdAt: Date.now(),
+      },
+    ],
+    { local: true },
+  );
+  if (!record) throw new Error('Reminder was empty or invalid');
+  if (network) network.pushNow([toWire(record)], 'reminders');
+  return reminderView(record);
+});
+
+ipcMain.handle('reminder-status', (_e, { id, status } = {}) => setReminderStatus(id, status));
+
+// Clears closed reminders from this computer's Done list (they stay in the history file).
+ipcMain.handle('reminders-clear-done', () => {
+  const department = config.get('department');
+  const ids = reminders
+    .all()
+    .filter((r) => (r.to === department || r.from === department) && reminders.status(r))
+    .map((r) => r.id);
+  if (reminderHides.setMany(ids, true)) send('reminders-changed', { alert: null });
+});
+
+// Names to suggest for a department: people reminders went to, then names its staff sign messages with.
+ipcMain.handle('reminder-names', (_e, department) => {
+  if (!DEPARTMENT_IDS.includes(department)) return [];
+  const names = reminders.namesFor(department);
+  const seen = new Set(names.map((n) => n.toLowerCase()));
+  for (let i = store.sorted.length - 1; i >= 0 && names.length < 40; i--) {
+    const m = store.sorted[i];
+    if (m.from !== department || !m.author || seen.has(m.author.toLowerCase())) continue;
+    seen.add(m.author.toLowerCase());
+    names.push(m.author);
+  }
+  return names;
+});
+
+ipcMain.handle('reminders-seen', () => {
+  config.set({ remindersSeenAt: Date.now() });
   sendUnread();
 });
 

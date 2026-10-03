@@ -13,7 +13,8 @@ const DEPARTMENT_IDS = DEPARTMENTS.map((d) => d.id);
 const TO_ALL = 'all';
 
 // Emoji reactions offered on messages, in the order they're shown.
-const REACTIONS = ['👌', '👍', '😂', '😅'];
+// Entries in :colons: are custom pictures in assets/reactions (see the page's CUSTOM_REACTIONS).
+const REACTIONS = ['👌', '👍', '😂', '😅', ':dead-inside:'];
 
 const NETWORK = {
   APP_ID: 'okv-messenger',
@@ -31,6 +32,7 @@ const NETWORK = {
 
 const LIMITS = {
   TEXT: 4000,
+  REMINDER: 1000,
   AUTHOR: 40,
   HOST: 64,
   // Timestamps outside this window are treated as corrupt.
