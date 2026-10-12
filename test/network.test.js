@@ -194,9 +194,11 @@ test('reactions reach every computer, and 1.1.0 computers are never asked about 
   });
   link([a, b, v110]);
 
-  const [thumb] = a.reactions.add([reaction(msg, 'reception', '👍')], { local: true });
+  // Distinct times: reactions are listed in the order they were made, so ties would make this test random.
+  const t0 = Date.now();
+  const [thumb] = a.reactions.add([reaction(msg, 'reception', '👍', { createdAt: t0 })], { local: true });
   a.net.pushNow([thumb], 'reactions');
-  b.reactions.add([reaction(msg, 'clinical', '👍'), reaction(msg, 'clinical', '😂')]);
+  b.reactions.add([reaction(msg, 'clinical', '👍', { createdAt: t0 + 1 }), reaction(msg, 'clinical', '😂', { createdAt: t0 + 2 })]);
   await waitFor(() => a.reactions.count === 3 && b.reactions.count === 3);
   assert.deepEqual(a.reactions.forMessage(msg.id, ['👌', '👍', '😂', '😅']), [
     { emoji: '👍', by: ['reception', 'clinical'] },
