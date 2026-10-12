@@ -9,6 +9,7 @@ const DEFAULTS = {
   sound: true,
   autoStart: true,
   iconPosition: null,
+  panelSize: null, // { width, height } the board was last resized to
   lastReadAt: 0,
   firstRunAt: null,
   peerId: null,

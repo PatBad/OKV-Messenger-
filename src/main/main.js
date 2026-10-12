@@ -10,6 +10,7 @@ const { MessageStore, DeletionLog, ReactionLog, ReminderLog, LocalHides, toWire,
 const { Network } = require('./network');
 const { Updater } = require('./updater');
 const { createLogger } = require('./logger');
+const { resizeBounds } = require('./geometry');
 
 // Developer overrides so several copies can run side by side on one PC.
 // See README "Running two copies for testing".
@@ -23,6 +24,9 @@ const ICON_SIZE = 76;
 const PULSE_PAD = 22;
 const PANEL_WIDTH = 400;
 const PANEL_HEIGHT = 640;
+// The open board can be resized by dragging its edges, within these limits.
+const PANEL_MIN_WIDTH = 340;
+const PANEL_MIN_HEIGHT = 440;
 const EDGE = 12;
 const ASSETS = path.join(__dirname, '..', '..', 'assets');
 const HOST = os.hostname().slice(0, LIMITS.HOST);
@@ -198,8 +202,10 @@ function setExpanded(value) {
 /** Opens the panel out of the bubble, towards the middle of the screen. */
 function panelBounds() {
   const wa = screen.getDisplayMatching({ ...iconPos, width: ICON_SIZE, height: ICON_SIZE }).workArea;
-  const width = Math.min(PANEL_WIDTH, wa.width - EDGE * 2);
-  const height = Math.min(PANEL_HEIGHT, wa.height - EDGE * 2);
+  // The size this computer's board was last resized to, if it still fits the screen.
+  const saved = config.get('panelSize') || {};
+  const width = Math.min(Number.isFinite(saved.width) ? Math.max(saved.width, PANEL_MIN_WIDTH) : PANEL_WIDTH, wa.width - EDGE * 2);
+  const height = Math.min(Number.isFinite(saved.height) ? Math.max(saved.height, PANEL_MIN_HEIGHT) : PANEL_HEIGHT, wa.height - EDGE * 2);
   const right = iconPos.x + ICON_SIZE / 2 > wa.x + wa.width / 2;
   const bottom = iconPos.y + ICON_SIZE / 2 > wa.y + wa.height / 2;
   const x = clamp(right ? iconPos.x + ICON_SIZE - width : iconPos.x, wa.x, wa.x + wa.width - width);
@@ -709,6 +715,35 @@ ipcMain.on('drag-end', () => {
     iconPos = validIconPosition(iconPos) || defaultIconPosition();
     win.setBounds(collapsedBounds());
   }
+  config.set({ iconPosition: iconPos });
+});
+
+// Resizing the open board by dragging an edge or corner. Windows gives frameless
+// transparent windows no resize borders, so the page draws its own handles and
+// reports the pointer's movement since the drag began.
+let resizeFrom = null; // { edge, bounds } for the drag in progress
+
+ipcMain.on('resize-start', (_e, edge) => {
+  if (!win || !expanded || typeof edge !== 'string' || !/^[nsew]{1,2}$/.test(edge)) return;
+  resizeFrom = { edge, bounds: win.getBounds() };
+});
+
+ipcMain.on('resize-move', (_e, d) => {
+  if (!win || !expanded || !resizeFrom || !d || !Number.isFinite(d.dx) || !Number.isFinite(d.dy)) return;
+  const { edge, bounds } = resizeFrom;
+  const area = screen.getDisplayMatching(bounds).workArea;
+  win.setBounds(resizeBounds(edge, bounds, d.dx, d.dy, area, { width: PANEL_MIN_WIDTH, height: PANEL_MIN_HEIGHT }));
+});
+
+ipcMain.on('resize-end', () => {
+  if (!win || !resizeFrom) return;
+  resizeFrom = null;
+  const { width, height } = win.getBounds();
+  config.set({ panelSize: { width, height } });
+  // As with moving it, the bubble follows to the board's nearest corner.
+  iconPos = validIconPosition(iconForPanel(clampToWorkArea(win.getBounds()))) || defaultIconPosition();
+  panelRect = panelBounds().rect;
+  win.setBounds(panelRect);
   config.set({ iconPosition: iconPos });
 });
 

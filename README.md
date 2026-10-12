@@ -14,6 +14,7 @@ There is no server and no internet requirement. Every computer keeps its own com
 | Open the board | Click the logo |
 | Move the logo | Drag it anywhere on screen (it remembers where) |
 | Move the open board | Drag it by its top bar; the logo moves with it to the nearest corner |
+| Resize the open board | Drag any edge or corner. It remembers the size you choose (smallest allowed is 340 × 440) |
 | Minimise back to the logo | Click **—** or press **Esc** |
 | Send | Type and press **Enter** (**Shift+Enter** for a new line) |
 | Send to one department | Choose it in the **To** box (default is Everyone) |
@@ -113,7 +114,7 @@ src/main/main.js       Window (expand/collapse, drag, always on top), tray, IPC
 src/main/store.js      History on disk (messages, deletions, reactions, reminders) + validation + sync fingerprints
 src/main/network.js    Peer discovery (UDP) and sync (HTTP) between computers
 src/main/updater.js    Auto-update from GitHub Releases
-src/main/config.js     Per-computer settings (department, icon position, …)
+src/main/config.js     Per-computer settings (department, icon position, board size, …)
 src/preload.js         The safe bridge between the window and the main process
 src/renderer/          The interface (HTML/CSS/JS, no framework)
 build/installer.nsh    Adds the Windows Firewall rules during first install

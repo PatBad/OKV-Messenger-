@@ -292,6 +292,34 @@ el.bubble.addEventListener('pointerleave', () => {
 // The open panel: drag it by its top bar (but not by the buttons there).
 makeDraggable(document.querySelector('.topbar'), { canStart: (e) => !e.target.closest('button') });
 
+// The open panel: resize it by dragging any edge or corner.
+for (const handle of document.querySelectorAll('.rh')) {
+  let from = null;
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    from = { x: e.screenX, y: e.screenY };
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {
+      // pointer already released
+    }
+    document.body.classList.add('is-resizing');
+    okv.resizeStart(handle.dataset.edge);
+    e.preventDefault();
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (from) okv.resizeMove(e.screenX - from.x, e.screenY - from.y);
+  });
+  const end = () => {
+    if (!from) return;
+    from = null;
+    document.body.classList.remove('is-resizing');
+    okv.resizeEnd();
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+}
+
 el.collapse.addEventListener('click', () => setExpanded(false));
 
 // ---------- Badge ----------

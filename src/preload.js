@@ -31,6 +31,9 @@ contextBridge.exposeInMainWorld('okv', {
   dragMove: (x, y) => ipcRenderer.send('drag-move', { x, y }),
   dragEnd: () => ipcRenderer.send('drag-end'),
   setClickThrough: (on) => ipcRenderer.send('click-through', on),
+  resizeStart: (edge) => ipcRenderer.send('resize-start', edge),
+  resizeMove: (dx, dy) => ipcRenderer.send('resize-move', { dx, dy }),
+  resizeEnd: () => ipcRenderer.send('resize-end'),
   updateAction: (action) => ipcRenderer.invoke('update-action', action),
   openDataFolder: () => ipcRenderer.invoke('open-data-folder'),
 
