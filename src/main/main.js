@@ -12,6 +12,7 @@ const { Updater } = require('./updater');
 const { createLogger } = require('./logger');
 const { resizeBounds } = require('./geometry');
 const { GifStore, HASH: GIF_HASH } = require('./gifs');
+const { fetchGif, nameFromUrl } = require('./gifurl');
 
 // Developer overrides so several copies can run side by side on one PC.
 // See README "Running two copies for testing".
@@ -769,6 +770,18 @@ ipcMain.on('resize-end', () => {
 });
 
 ipcMain.on('click-through', (_e, on) => setClickThrough(!!on));
+
+// A GIF pasted as a web link (e.g. from the Windows emoji panel's GIF tab): fetched here, then attached like a chosen file.
+ipcMain.handle('fetch-gif-url', async (_e, url) => {
+  if (typeof url !== 'string') throw new Error('No link given');
+  const data = await fetchGif(url);
+  return { data, name: nameFromUrl(url) };
+});
+
+// Lets the page record what a paste contained when it couldn't use it, to help work out why.
+ipcMain.on('log-note', (_e, note) => {
+  if (typeof note === 'string') log.info(`page: ${note.slice(0, 600)}`);
+});
 
 ipcMain.handle('delete-message', (_e, input) => setDeleted(input, true));
 

@@ -942,6 +942,69 @@ el.gifRemove.addEventListener('click', () => {
   el.text.focus();
 });
 
+/**
+ * Looks in pasted web content for a GIF: a picture embedded in it (a data: address), or a link to one
+ * on a website. The Windows emoji panel's GIF tab and web pages can hand a GIF over in these ways.
+ */
+function gifFromHtml(html) {
+  if (!html) return null;
+  const doc = new DOMParser().parseFromString(html, 'text/html'); // inert: nothing in it is loaded
+  for (const img of doc.querySelectorAll('img')) {
+    const src = img.getAttribute('src') || '';
+    const data = /^data:image\/gif;base64,([A-Za-z0-9+/=]+)$/i.exec(src);
+    if (data) return { bytes: Uint8Array.from(atob(data[1]), (c) => c.charCodeAt(0)) };
+    if (/^https:\/\//i.test(src) && (/\.gif(\?|#|$)/i.test(src) || /(tenor|giphy)\.com/i.test(src))) return { url: src };
+  }
+  return null;
+}
+
+/** What a paste contained, in words, for the log. */
+function describePaste(cd, html) {
+  const files = [...cd.files].map((f) => `${f.name || '(unnamed)'}:${f.type || '?'}:${f.size}`);
+  return `paste could not be used as a GIF. types=[${[...cd.types].join(', ')}] files=[${files.join(', ')}] html=${html ? html.slice(0, 300).replace(/\s+/g, ' ') : '(none)'}`;
+}
+
+// Pasting (Ctrl+V, or choosing a GIF in the Windows emoji panel with Win + ;) attaches a GIF if the paste holds one.
+// Ordinary text pastes are left alone.
+document.addEventListener('paste', async (e) => {
+  if (!state.expanded || state.screen !== 'board' || !e.clipboardData) return;
+  const cd = e.clipboardData;
+  const files = [...cd.files];
+  const html = cd.getData('text/html');
+
+  const gifFile = files.find((f) => f.type === 'image/gif' || /\.gif$/i.test(f.name));
+  if (gifFile) {
+    e.preventDefault();
+    attachGif(gifFile);
+    return;
+  }
+
+  const found = gifFromHtml(html);
+  if (found) {
+    e.preventDefault();
+    try {
+      if (found.bytes) {
+        await attachGif(new File([found.bytes], 'pasted.gif', { type: 'image/gif' }));
+      } else {
+        toast('Getting that GIF…');
+        const got = await okv.fetchGifUrl(found.url);
+        await attachGif(new File([got.data], got.name, { type: 'image/gif' }));
+      }
+    } catch {
+      showGifError('Couldn’t get that GIF. Saving it as a file and using the GIF button works too.');
+      okv.logNote(describePaste(cd, html));
+    }
+    return;
+  }
+
+  if (files.length) {
+    // A picture, but not a GIF we can read (often a still frame of one).
+    e.preventDefault();
+    showGifError('That paste is a still picture, not a GIF. Save the GIF as a file and use the GIF button.');
+    okv.logNote(describePaste(cd, html));
+  }
+});
+
 // Dropping a GIF file anywhere on the board attaches it.
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => {

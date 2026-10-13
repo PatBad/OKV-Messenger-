@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('okv', {
   getState: () => ipcRenderer.invoke('get-state'),
   query: (options) => ipcRenderer.invoke('query', options),
   sendMessage: (message) => ipcRenderer.invoke('send-message', message),
+  fetchGifUrl: (url) => ipcRenderer.invoke('fetch-gif-url', url),
+  logNote: (note) => ipcRenderer.send('log-note', note),
   deleteMessage: (target) => ipcRenderer.invoke('delete-message', target),
   undoDelete: (target) => ipcRenderer.invoke('undo-delete', target),
   deleteDay: (day) => ipcRenderer.invoke('delete-day', day),

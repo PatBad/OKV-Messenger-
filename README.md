@@ -17,7 +17,7 @@ There is no server and no internet requirement. Every computer keeps its own com
 | Resize the open board | Drag any edge or corner. It remembers the size you choose (smallest allowed is 340 × 440) |
 | Minimise back to the logo | Click **—** or press **Esc** |
 | Send | Type and press **Enter** (**Shift+Enter** for a new line) |
-| Send a GIF | Click **GIF** beside the message box (or drop a GIF file onto the board), choose a file, add a caption if you like and press Send. GIFs can be up to 4 MB. Every PC keeps its own copy, so they work without internet |
+| Send a GIF | Click **GIF** beside the message box, drop a GIF file onto the board, or paste one (Ctrl+V, or pick one in the Windows emoji panel with Win + ;), choose a file, add a caption if you like and press Send. GIFs can be up to 4 MB. Every PC keeps its own copy, so they work without internet |
 | Send to one department | Choose it in the **To** box (default is Everyone) |
 | Flag something urgent | Click **Urgent** before sending; it plays a louder alert and shows in red |
 | Filter | **All**, **For us** (sent directly to your department), **From us**, **Urgent** |
