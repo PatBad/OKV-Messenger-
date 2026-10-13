@@ -1894,9 +1894,12 @@ document.addEventListener('paste', async (e) => {
         const got = await okv.fetchGifUrl(found.url);
         await attachGif(new File([got.data], got.name, { type: 'image/gif' }));
       }
-    } catch {
-      showGifError('Couldn’t get that GIF. Saving it as a file and attaching it with the paperclip works too.');
-      okv.logNote(describePaste(cd, html));
+    } catch (err) {
+      // Say why when we know (too big, not a GIF, the site refused); otherwise suggest the fallback.
+      const reason = errText(err);
+      const known = /too large|isn’t a GIF|The site answered|valid link|can’t be used/.test(reason);
+      showGifError(known ? `Couldn’t use that GIF: ${reason}.` : 'Couldn’t get that GIF. It may need internet on this computer. Saving it as a file and attaching it with the paperclip works too.');
+      okv.logNote(`${describePaste(cd, html)} reason=${reason.slice(0, 200)}`);
     }
     return;
   }

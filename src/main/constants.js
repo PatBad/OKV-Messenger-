@@ -61,8 +61,9 @@ const LIMITS = {
   TEXT: 4000,
   REMINDER: 1000,
   PIN: 300,
-  // Largest GIF that can be sent (computers keep every GIF that's sent).
-  GIF_BYTES: 4 * 1024 * 1024,
+  // Largest GIF that can be sent (computers keep every GIF that's sent). GIPHY's search results are often
+  // 4-6 MB, so this matches the limit for attached files.
+  GIF_BYTES: 15 * 1024 * 1024,
   // Attached files and images.
   FILE_BYTES: 15 * 1024 * 1024,
   MAX_ATTACHMENTS: 5,

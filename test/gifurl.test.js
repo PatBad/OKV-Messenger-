@@ -58,3 +58,17 @@ test('nameFromUrl gives a tidy .gif name', () => {
   assert.equal(nameFromUrl('https://example.com/'), 'pasted.gif');
   assert.equal(nameFromUrl('nonsense'), 'pasted.gif');
 });
+
+test('GIFs from the web can be up to 15 MB (GIPHY results are often 4-6 MB), and a refusal says why', async () => {
+  assert.equal(LIMITS.GIF_BYTES, 15 * 1024 * 1024);
+  const gif = makeGif({ seed: 12 });
+  const sixMegabytes = Buffer.concat([gif, Buffer.alloc(6 * 1024 * 1024)]);
+  assert.equal((await fetchGif('https://media.giphy.com/a/giphy.gif', fakeFetch(sixMegabytes))).length, sixMegabytes.length);
+
+  const huge = fakeFetch(Buffer.concat([gif, Buffer.alloc(LIMITS.GIF_BYTES)]));
+  await assert.rejects(fetchGif('https://media.giphy.com/b/giphy.gif', huge), /too large: 15\.\d MB, and the limit is 15 MB/);
+  await assert.rejects(
+    fetchGif('https://media.giphy.com/c/giphy.gif', fakeFetch(gif, { headers: { 'content-length': String(20 * 1024 * 1024) } })),
+    /too large: 20\.0 MB, and the limit is 15 MB/,
+  );
+});

@@ -5,6 +5,8 @@ const { LIMITS } = require('./constants');
 
 const TIMEOUT_MS = 15000;
 
+const tooLarge = (bytes) => `That GIF is too large: ${(bytes / 1024 / 1024).toFixed(1)} MB, and the limit is ${LIMITS.GIF_BYTES / 1024 / 1024} MB`;
+
 /** A GIF link is only followed if it's a plain https address of a named website (never an IP address or this computer). */
 function checkUrl(raw) {
   let url;
@@ -41,7 +43,7 @@ async function fetchGif(raw, fetchImpl = fetch) {
   const res = await fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(TIMEOUT_MS), headers: { accept: 'image/gif,*/*' } });
   if (!res.ok) throw new Error(`The site answered ${res.status}`);
   const declared = Number(res.headers.get('content-length'));
-  if (declared > LIMITS.GIF_BYTES) throw new Error('That GIF is too large');
+  if (declared > LIMITS.GIF_BYTES) throw new Error(tooLarge(declared));
 
   const chunks = [];
   let size = 0;
@@ -52,7 +54,7 @@ async function fetchGif(raw, fetchImpl = fetch) {
     size += value.length;
     if (size > LIMITS.GIF_BYTES) {
       await reader.cancel();
-      throw new Error('That GIF is too large');
+      throw new Error(tooLarge(size));
     }
     chunks.push(Buffer.from(value));
   }
