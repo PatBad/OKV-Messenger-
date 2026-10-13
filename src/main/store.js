@@ -13,6 +13,20 @@ const validTime = (t) => Number.isFinite(t) && t >= LIMITS.MIN_TS && t <= LIMITS
 const validHost = (h) => typeof h === 'string' && h.length <= LIMITS.HOST;
 
 /**
+ * The GIF attached to a message: { hash, size, w, h }, where hash is the
+ * SHA-256 of the file. Returns a clean copy or null. A bad GIF field is
+ * dropped rather than rejecting the whole message.
+ */
+function sanitizeGif(g) {
+  if (!g || typeof g !== 'object') return null;
+  const { hash, size, w, h } = g;
+  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) return null;
+  if (!Number.isInteger(size) || size < 1 || size > LIMITS.GIF_BYTES) return null;
+  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w > 65535 || h > 65535) return null;
+  return { hash, size, w, h };
+}
+
+/**
  * Validates a message received from anywhere (disk, network, renderer) and
  * returns a clean copy containing only the shared "wire" fields, or null.
  * Every computer runs the same rules, so they all agree on what is valid.
@@ -35,7 +49,7 @@ function sanitizeMessage(m) {
   if (typeof urgent !== 'boolean') return null;
   if (!validTime(createdAt)) return null;
 
-  return {
+  const message = {
     v: 1,
     id,
     from,
@@ -46,6 +60,9 @@ function sanitizeMessage(m) {
     urgent,
     createdAt: Math.floor(createdAt),
   };
+  const gif = sanitizeGif(m.gif);
+  if (gif) message.gif = gif;
+  return message;
 }
 
 /**
@@ -560,6 +577,7 @@ module.exports = {
   ReminderLog,
   LocalHides,
   sanitizeMessage,
+  sanitizeGif,
   sanitizeDeletion,
   sanitizeReaction,
   sanitizeReminderRecord,

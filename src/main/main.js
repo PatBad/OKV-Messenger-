@@ -1,16 +1,17 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell, protocol } = require('electron');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { DEPARTMENTS, DEPARTMENT_IDS, REACTIONS, LIMITS } = require('./constants');
+const { DEPARTMENTS, DEPARTMENT_IDS, GIF_PLACEHOLDER, REACTIONS, LIMITS } = require('./constants');
 const { Config } = require('./config');
 const { MessageStore, DeletionLog, ReactionLog, ReminderLog, LocalHides, toWire, isUnread } = require('./store');
 const { Network } = require('./network');
 const { Updater } = require('./updater');
 const { createLogger } = require('./logger');
 const { resizeBounds } = require('./geometry');
+const { GifStore, HASH: GIF_HASH } = require('./gifs');
 
 // Developer overrides so several copies can run side by side on one PC.
 // See README "Running two copies for testing".
@@ -31,12 +32,16 @@ const EDGE = 12;
 const ASSETS = path.join(__dirname, '..', '..', 'assets');
 const HOST = os.hostname().slice(0, LIMITS.HOST);
 
+// GIFs are shown to the page as okv-gif://<fingerprint>, served from this computer's GIF folder.
+protocol.registerSchemesAsPrivileged([{ scheme: 'okv-gif', privileges: { standard: true, secure: true } }]);
+
 let win = null;
 let tray = null;
 let config;
 let store;
 let deletions; // "delete for everyone", shared with the other computers
 let hides; // "delete for me", this computer only
+let gifs; // GIF files, named by fingerprint
 let reactions; // emoji reactions, shared with the other computers
 let reminders; // reminders and their done/cancelled history, shared
 let reminderHides; // done reminders cleared from this computer's Done list
@@ -75,6 +80,14 @@ async function start() {
   store = new MessageStore(historyDir).load();
   deletions = new DeletionLog(historyDir).load();
   hides = new LocalHides(historyDir).load();
+  gifs = new GifStore(historyDir);
+  gifs.on('added', (hash) => send('gif-ready', hash));
+  protocol.handle('okv-gif', (request) => {
+    const hash = new URL(request.url).hostname;
+    const file = GIF_HASH.test(hash) ? gifs.read(hash) : null;
+    if (!file) return new Response('GIF not here yet', { status: 404, headers: { 'cache-control': 'no-store' } });
+    return new Response(file, { headers: { 'content-type': 'image/gif', 'cache-control': 'max-age=31536000, immutable' } });
+  });
   reactions = new ReactionLog(historyDir).load();
   reminders = new ReminderLog(historyDir).load();
   reminderHides = new LocalHides(historyDir, 'hidden-reminders.jsonl').load();
@@ -99,6 +112,7 @@ async function start() {
     deletions,
     reactions,
     reminders,
+    gifs,
     peerId: config.get('peerId'),
     getProfile: () => ({ department: config.get('department'), host: HOST }),
     log,
@@ -539,6 +553,8 @@ ipcMain.handle('get-state', () => ({
   host: HOST,
   departments: DEPARTMENTS,
   reactions: REACTIONS,
+  gifPlaceholder: GIF_PLACEHOLDER,
+  gifMaxBytes: LIMITS.GIF_BYTES,
   settings: publicSettings(),
   expanded,
   unread: unread(),
@@ -564,6 +580,10 @@ ipcMain.handle('send-message', (_e, input = {}) => {
   const department = config.get('department');
   if (!department) throw new Error('Choose a department first');
   const author = typeof input.author === 'string' ? input.author.trim().slice(0, LIMITS.AUTHOR) : '';
+  // An attached GIF is checked and stored here; the message carries only its fingerprint.
+  let gif = null;
+  if (input.gif && input.gif.data) gif = gifs.add(Buffer.from(input.gif.data));
+  const text = typeof input.text === 'string' ? input.text.trim() : '';
   const [message] = store.add(
     [
       {
@@ -572,7 +592,8 @@ ipcMain.handle('send-message', (_e, input = {}) => {
         to: input.to,
         author,
         host: HOST,
-        text: input.text,
+        text: gif && !text ? GIF_PLACEHOLDER : input.text,
+        gif,
         urgent: input.urgent === true,
         createdAt: Date.now(),
       },

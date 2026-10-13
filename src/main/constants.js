@@ -12,6 +12,10 @@ const DEPARTMENT_IDS = DEPARTMENTS.map((d) => d.id);
 // Recipient value meaning "every department".
 const TO_ALL = 'all';
 
+// A GIF message carries this as its text, so computers on versions that predate GIFs
+// (which reject messages without text) still accept it and show "[GIF]".
+const GIF_PLACEHOLDER = '[GIF]';
+
 // Emoji reactions offered on messages, in the order they're shown.
 // Entries in :colons: are custom pictures in assets/reactions (see the page's CUSTOM_REACTIONS).
 const REACTIONS = ['👌', '👍', '😂', '😅', ':dead-inside:'];
@@ -33,6 +37,8 @@ const NETWORK = {
 const LIMITS = {
   TEXT: 4000,
   REMINDER: 1000,
+  // Largest GIF that can be sent (computers keep every GIF that's sent).
+  GIF_BYTES: 4 * 1024 * 1024,
   AUTHOR: 40,
   HOST: 64,
   // Timestamps outside this window are treated as corrupt.
@@ -40,4 +46,4 @@ const LIMITS = {
   MAX_TS: Date.UTC(2100, 0, 1),
 };
 
-module.exports = { DEPARTMENTS, DEPARTMENT_IDS, TO_ALL, REACTIONS, NETWORK, LIMITS };
+module.exports = { DEPARTMENTS, DEPARTMENT_IDS, TO_ALL, GIF_PLACEHOLDER, REACTIONS, NETWORK, LIMITS };

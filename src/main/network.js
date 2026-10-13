@@ -4,7 +4,8 @@ const dgram = require('dgram');
 const http = require('http');
 const os = require('os');
 const { EventEmitter } = require('events');
-const { NETWORK, DEPARTMENT_IDS } = require('./constants');
+const { NETWORK, DEPARTMENT_IDS, LIMITS } = require('./constants');
+const { HASH } = require('./gifs');
 
 const API = '/okv/v1';
 const HEADER = 'x-okv-app';
@@ -70,6 +71,7 @@ class Network extends EventEmitter {
     deletions = null,
     reactions = null,
     reminders = null,
+    gifs = null,
     peerId,
     getProfile,
     log,
@@ -98,6 +100,12 @@ class Network extends EventEmitter {
       this.collections.push({ name: 'reminders', store: reminders, prefix: '/reminders', key: 'records', beacon: 'rm' });
     }
     this.store = store;
+    // GIF files. Messages only carry a GIF's fingerprint; the file itself is fetched
+    // from whichever computer has it (GET /gifs/<fingerprint>).
+    this.gifs = gifs;
+    this.wantedGifs = new Set();
+    this._fetchingGifs = false;
+    this._fetchGifsTimer = null;
     this.peerId = peerId;
     this.getProfile = getProfile;
     this.log = log || { info() {}, warn() {}, error() {} };
@@ -116,11 +124,14 @@ class Network extends EventEmitter {
     this._beaconSoonTimer = null;
     this._onStoreAdded = () => this.announce();
     for (const c of this.collections) c.store.on('added', this._onStoreAdded);
+    this._onMessagesAdded = (messages) => this._wantGifs(messages);
+    store.on('added', this._onMessagesAdded);
   }
 
   async start() {
     await this._startHttp();
     await this._startUdp();
+    this._wantGifs(this.store.sorted || []);
     this.timers.push(setInterval(() => this._tick(), this.beaconIntervalMs));
     return this;
   }
@@ -130,6 +141,8 @@ class Network extends EventEmitter {
     this.timers.forEach(clearInterval);
     clearTimeout(this._beaconSoonTimer);
     for (const c of this.collections) c.store.off('added', this._onStoreAdded);
+    this.store.off('added', this._onMessagesAdded);
+    clearTimeout(this._fetchGifsTimer);
     if (this.udp) this.udp.close();
     if (this.server) this.server.close();
     this.agent.destroy();
@@ -203,6 +216,16 @@ class Network extends EventEmitter {
       const url = new URL(req.url, 'http://localhost');
       if (!url.pathname.startsWith(API)) return send(404, { error: 'not found' });
       const rest = url.pathname.slice(API.length);
+
+      // A GIF file, by its fingerprint. Anything that isn't exactly 64 hex characters is refused,
+      // so a request can never name a file outside the GIF folder.
+      if (req.method === 'GET' && rest.startsWith('/gifs/')) {
+        const hash = rest.slice('/gifs/'.length);
+        const file = this.gifs && HASH.test(hash) ? this.gifs.read(hash) : null;
+        if (!file) return send(404, { error: 'not found' });
+        res.writeHead(200, { 'content-type': 'image/gif', 'content-length': file.length });
+        return res.end(file);
+      }
       const c = this.collections.find((x) => x.prefix && rest.startsWith(`${x.prefix}/`)) || this.collections[0];
       const route = `${req.method} ${rest.slice(c.prefix.length)}`;
       const address = normaliseAddress(req.socket.remoteAddress);
@@ -258,6 +281,93 @@ class Network extends EventEmitter {
       req.on('error', reject);
       req.end(payload);
     });
+  }
+
+  /** Downloads a file (up to maxBytes) from a computer; rejects on any non-200 answer. */
+  _requestBinary(peer, route, maxBytes) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          host: peer.address,
+          port: peer.port,
+          method: 'GET',
+          path: API + route,
+          agent: this.agent,
+          timeout: NETWORK.REQUEST_TIMEOUT_MS * 4,
+          headers: { [HEADER]: NETWORK.APP_ID },
+        },
+        (res) => {
+          if (res.statusCode !== 200) {
+            res.resume();
+            reject(new Error(`HTTP ${res.statusCode}`));
+            return;
+          }
+          const chunks = [];
+          let size = 0;
+          res.on('data', (c) => {
+            size += c.length;
+            if (size > maxBytes) req.destroy(new Error('file too large'));
+            else chunks.push(c);
+          });
+          res.on('end', () => resolve(Buffer.concat(chunks)));
+          res.on('error', reject);
+        },
+      );
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  // ---------- GIF files ----------
+
+  /** Notes which of these messages' GIFs this computer doesn't have yet, and goes to get them. */
+  _wantGifs(messages) {
+    if (!this.gifs) return;
+    let any = false;
+    for (const m of messages) {
+      if (m.gif && !this.gifs.has(m.gif.hash)) {
+        this.wantedGifs.add(m.gif.hash);
+        any = true;
+      }
+    }
+    if (any) this._fetchGifsSoon();
+  }
+
+  _fetchGifsSoon() {
+    if (this._fetchGifsTimer || this.stopped) return;
+    this._fetchGifsTimer = setTimeout(() => {
+      this._fetchGifsTimer = null;
+      this._fetchGifs();
+    }, 150);
+  }
+
+  /** Asks each known computer in turn for every GIF still missing; whatever can't be found is retried on the next tick. */
+  async _fetchGifs() {
+    if (this._fetchingGifs || this.stopped || !this.gifs) return;
+    this._fetchingGifs = true;
+    try {
+      for (const hash of [...this.wantedGifs]) {
+        if (this.gifs.has(hash)) {
+          this.wantedGifs.delete(hash);
+          continue;
+        }
+        for (const peer of [...this.peerMap.values()]) {
+          if (this.stopped) return;
+          try {
+            const file = await this._requestBinary(peer, `/gifs/${hash}`, LIMITS.GIF_BYTES);
+            this.gifs.addVerified(hash, file);
+            this.wantedGifs.delete(hash);
+            this.log.info(`received a GIF (${Math.round(file.length / 1024)} KB) from ${peer.host || peer.address}`);
+            break;
+          } catch {
+            // that computer doesn't have it (or is unreachable); try the next
+          }
+        }
+      }
+    } finally {
+      this._fetchingGifs = false;
+    }
   }
 
   // ---------- Sync ----------
@@ -465,6 +575,7 @@ class Network extends EventEmitter {
     if (removed) this.emit('peers', this.peers());
     this._sendBeacon('hello');
     for (const peer of this.peerMap.values()) this._maybeSync(peer);
+    if (this.wantedGifs.size) this._fetchGifs();
   }
 }
 

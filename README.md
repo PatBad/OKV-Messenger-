@@ -17,6 +17,7 @@ There is no server and no internet requirement. Every computer keeps its own com
 | Resize the open board | Drag any edge or corner. It remembers the size you choose (smallest allowed is 340 × 440) |
 | Minimise back to the logo | Click **—** or press **Esc** |
 | Send | Type and press **Enter** (**Shift+Enter** for a new line) |
+| Send a GIF | Click **GIF** beside the message box (or drop a GIF file onto the board), choose a file, add a caption if you like and press Send. GIFs can be up to 4 MB. Every PC keeps its own copy, so they work without internet |
 | Send to one department | Choose it in the **To** box (default is Everyone) |
 | Flag something urgent | Click **Urgent** before sending; it plays a louder alert and shows in red |
 | Filter | **All**, **For us** (sent directly to your department), **From us**, **Urgent** |
@@ -48,6 +49,8 @@ The installer puts the app in the current Windows user's profile, so future upda
 - Messages are only accepted from private network addresses (192.168.x.x, 10.x.x.x, 172.16–31.x.x).
 
 "Delete for everyone", reactions and reminders travel between computers the same way messages do, so a computer that was off catches up when it starts.
+
+A GIF is stored once on each PC in `history\gifs\`, named by a fingerprint of its contents; the message only carries that fingerprint, and each PC fetches any GIF it is missing directly from another PC on the clinic network. (On PCs still on an older version, a GIF message shows as "[GIF]".)
 
 Each computer stores its history in `%APPDATA%\OKV Messenger\history\messages.jsonl`. Deleting never removes a message from that file: deletions are recorded separately (`deletions.jsonl` for everyone, `hidden.jsonl` for this computer only) and the message is just hidden from the board. Settings > "Open message history folder" opens it. Back up that file to keep a permanent copy.
 
@@ -113,6 +116,8 @@ $env:OKV_DATA_DIR = "$PWD\.dev-data\b"; $env:OKV_BIND = "127.0.0.1"; $env:OKV_UD
 src/main/main.js       Window (expand/collapse, drag, always on top), tray, IPC
 src/main/store.js      History on disk (messages, deletions, reactions, reminders) + validation + sync fingerprints
 src/main/network.js    Peer discovery (UDP) and sync (HTTP) between computers
+src/main/gifs.js      GIF files kept on this PC: checking, storing by fingerprint
+src/main/geometry.js   Window-resizing maths
 src/main/updater.js    Auto-update from GitHub Releases
 src/main/config.js     Per-computer settings (department, icon position, board size, …)
 src/preload.js         The safe bridge between the window and the main process

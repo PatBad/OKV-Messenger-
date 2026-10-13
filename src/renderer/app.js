@@ -39,6 +39,13 @@ const el = {
   text: $('text'),
   send: $('send'),
   composeError: $('compose-error'),
+  gifBtn: $('gif-btn'),
+  gifFile: $('gif-file'),
+  gifAttached: $('gif-attached'),
+  gifThumb: $('gif-thumb'),
+  gifName: $('gif-name'),
+  gifSize: $('gif-size'),
+  gifRemove: $('gif-remove'),
   settings: $('screen-settings'),
   closeSettings: $('close-settings'),
   settingsDepts: $('settings-depts'),
@@ -85,6 +92,8 @@ const state = {
   newSince: 0,
   urgent: false,
   sending: false,
+  gif: null, // the GIF waiting to be sent: { data, name, size, url }
+  gifMaxBytes: 4 * 1024 * 1024,
   hasUrgentUnread: false,
   // Days the user has opened or closed (dayKey -> open). Otherwise only today is open.
   dayOpen: new Map(),
@@ -470,7 +479,9 @@ function messageNode(m) {
       m.urgent ? h('span', { class: 'msg-tag' }, 'Urgent') : null,
       h('time', { class: 'msg-time', datetime: new Date(m.createdAt).toISOString(), title: fullFmt.format(m.createdAt) }, timeFmt.format(m.createdAt)),
     ),
-    h('p', { class: 'msg-text' }, m.text),
+    // A GIF message has "[GIF]" as its text unless the sender typed a caption.
+    m.gif && m.text === GIF_PLACEHOLDER ? null : h('p', { class: 'msg-text' }, m.text),
+    gifNode(m),
     reactionsNode(m),
     // Shown while pointing at the message: react, or delete.
     h(
@@ -854,8 +865,89 @@ function autoGrow() {
 }
 
 function updateSendState() {
-  el.send.disabled = state.sending || !el.text.value.trim();
+  el.send.disabled = state.sending || (!el.text.value.trim() && !state.gif);
 }
+
+// ---------- GIFs ----------
+
+const GIF_PLACEHOLDER = '[GIF]'; // must match the main process
+
+const formatSize = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
+
+/** A GIF in a message, drawn from the file kept on this computer; "arriving" while it's still being fetched from another PC. */
+function gifNode(m) {
+  if (!m.gif) return null;
+  const { hash, w, h: height } = m.gif;
+  const wrap = h('div', { class: 'msg-gif' });
+  const img = h('img', {
+    class: 'msg-gif-img',
+    src: `okv-gif://${hash}`,
+    alt: m.text === GIF_PLACEHOLDER ? 'GIF' : m.text,
+    width: w,
+    height,
+    draggable: 'false',
+  });
+  img.addEventListener('error', () => {
+    // Not here yet; it's refreshed when the file arrives (see onGifReady).
+    wrap.classList.add('is-missing');
+    img.replaceWith(h('div', { class: 'msg-gif-wait' }, 'GIF is on its way…'));
+  });
+  wrap.append(img);
+  return wrap;
+}
+
+function showGifError(text) {
+  el.composeError.textContent = text;
+  el.composeError.hidden = false;
+}
+
+function clearGif() {
+  if (state.gif) URL.revokeObjectURL(state.gif.url);
+  state.gif = null;
+  el.gifFile.value = '';
+  el.gifAttached.hidden = true;
+  el.gifThumb.removeAttribute('src');
+  updateSendState();
+}
+
+/** Checks a chosen file really is a GIF within the size limit, and attaches it to the message being written. */
+async function attachGif(file) {
+  if (!file) return;
+  el.composeError.hidden = true;
+  if (file.size > state.gifMaxBytes) {
+    showGifError(`That GIF is ${formatSize(file.size)}. The limit is ${formatSize(state.gifMaxBytes)}.`);
+    return;
+  }
+  const data = await file.arrayBuffer();
+  const header = new TextDecoder('latin1').decode(new Uint8Array(data, 0, Math.min(6, data.byteLength)));
+  if (header !== 'GIF87a' && header !== 'GIF89a') {
+    showGifError('That file isn’t a GIF.');
+    return;
+  }
+  clearGif();
+  const url = URL.createObjectURL(new Blob([data], { type: 'image/gif' }));
+  state.gif = { data, name: file.name, size: file.size, url };
+  el.gifThumb.src = url;
+  el.gifName.textContent = file.name;
+  el.gifSize.textContent = formatSize(file.size);
+  el.gifAttached.hidden = false;
+  updateSendState();
+  el.text.focus();
+}
+
+el.gifBtn.addEventListener('click', () => el.gifFile.click());
+el.gifFile.addEventListener('change', () => attachGif(el.gifFile.files[0]));
+el.gifRemove.addEventListener('click', () => {
+  clearGif();
+  el.text.focus();
+});
+
+// Dropping a GIF file anywhere on the board attaches it.
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  if (state.expanded && state.screen === 'board') attachGif([...e.dataTransfer.files].find((f) => /gif$/i.test(f.type) || /\.gif$/i.test(f.name)));
+});
 
 el.to.addEventListener('change', updatePlaceholder);
 el.urgent.addEventListener('click', () => setUrgent(!state.urgent));
@@ -877,11 +969,18 @@ el.author.addEventListener('change', async () => {
 el.compose.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = el.text.value.trim();
-  if (!text || state.sending) return;
+  if ((!text && !state.gif) || state.sending) return;
   state.sending = true;
   updateSendState();
   try {
-    await okv.sendMessage({ to: el.to.value, text, urgent: state.urgent, author: el.author.value });
+    await okv.sendMessage({
+      to: el.to.value,
+      text,
+      urgent: state.urgent,
+      author: el.author.value,
+      gif: state.gif ? { data: state.gif.data } : undefined,
+    });
+    clearGif();
     el.text.value = '';
     autoGrow();
     setUrgent(false);
@@ -1204,6 +1303,11 @@ okv.onMessagesChanged(() => {
   if (state.settings.department) refresh();
 });
 
+// A GIF that was still on its way has arrived from another computer.
+okv.onGifReady(() => {
+  if (state.settings.department && state.screen === 'board') refresh();
+});
+
 okv.onUnread(({ count, urgent, reminders }) => {
   state.unread = count;
   state.hasUrgentUnread = urgent;
@@ -1244,6 +1348,7 @@ async function init() {
   Object.assign(state, {
     departments: s.departments,
     reactionChoices: s.reactions || [],
+    gifMaxBytes: s.gifMaxBytes || state.gifMaxBytes,
     settings: s.settings,
     unread: s.unread.count,
     hasUrgentUnread: s.unread.urgent,

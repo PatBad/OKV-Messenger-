@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('okv', {
   onView: on('view'),
   onMessages: on('messages-added'),
   onMessagesChanged: on('messages-changed'),
+  onGifReady: on('gif-ready'),
   onRemindersChanged: on('reminders-changed'),
   onUnread: on('unread'),
   onPeers: on('peers'),

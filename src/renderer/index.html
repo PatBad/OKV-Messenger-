@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: okv-gif:; font-src 'self'"
     />
     <title>OKV Messenger</title>
     <link rel="stylesheet" href="styles.css" />
@@ -93,7 +93,16 @@
               Urgent
             </button>
           </div>
+          <div id="gif-attached" class="gif-attached" hidden>
+            <img id="gif-thumb" class="gif-thumb" alt="" />
+            <span class="gif-attached-text"><strong id="gif-name"></strong><small id="gif-size"></small></span>
+            <button id="gif-remove" class="icon-btn small" type="button" title="Remove GIF" aria-label="Remove GIF">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </div>
           <div class="compose-row">
+            <button id="gif-btn" class="gif-btn" type="button" title="Attach a GIF (or drop one onto the board)">GIF</button>
+            <input id="gif-file" type="file" accept="image/gif" hidden />
             <textarea id="text" rows="1" maxlength="4000" placeholder="Message everyone…" aria-label="Message"></textarea>
             <button id="send" class="send" type="submit" disabled aria-label="Send">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></svg>
