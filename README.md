@@ -19,6 +19,11 @@ There is no server and no internet requirement. Every computer keeps its own com
 | Send | Type and press **Enter** (**Shift+Enter** for a new line) |
 | Send a GIF | Paste one (Ctrl+V, or pick one in the Windows emoji panel with Win + ;) or drop a GIF file onto the board, add a caption if you like and press Send. GIFs can be up to 4 MB. Every PC keeps its own copy, so they work without internet |
 | Reply to a message | Point at it and click the reply arrow. A "Replying to…" strip appears above the message box, and the reply goes to the department that sent the original (change **To** if you want). The reply shows a quote of the original; click the quote to jump to it. **Esc** cancels the reply |
+| Send a quick message | Click one of the buttons above the message box (such as "Client has arrived"). It sends straight away, with a few seconds to **Undo**. Change the buttons in **Settings → Quick messages** (wording, who it goes to, urgent or not) |
+| Fix a typo | Point at your own message, click **⋯** then **Edit message**. You can edit for 15 minutes after sending, and it shows "edited". Only the department that sent a message can edit it |
+| See who has read a message | Under messages your department sent: "✓ Seen by Clinical Team · 10:32". For a message to everyone it lists the departments that have seen it; hover it to see who is still to see it. A message counts as seen once it has been on screen for a second |
+| Pin a notice for everyone | Click the pin in the toolbar and type the notice, or use **⋯ → Pin as a notice** on a message. It stays at the top of every board until someone clicks its ✕. A new notice replaces the old one |
+| Quiet mode | Click the bell at the top of the board for 30 minutes or an hour of no sound. The badge still counts new messages, and **urgent** messages still make a sound |
 | Send to one department | Choose it in the **To** box (default is Everyone) |
 | Flag something urgent | Click **Urgent** before sending; it plays a louder alert and shows in red |
 | Filter | **All**, **For us** (sent directly to your department), **From us**, **Urgent** |
@@ -29,7 +34,7 @@ There is no server and no internet requirement. Every computer keeps its own com
 | Search | Magnifying glass, or **Ctrl+F** |
 | Set a reminder for someone | Switch to **Reminders**, pick their department, type their name (names used before are suggested), write the reminder and optionally tick **Due** to set a time. It stays until it’s dealt with |
 | Deal with a reminder | Reminders for your department appear under **For us** (the tab shows how many are open, red if any are overdue). When one falls due, that department’s computers chime and the logo pulses. Click **✓ Done** when it’s handled; the department that sent it can **Cancel** it instead. Closed reminders move to **Done**, which you can clear on your own computer |
-| Settings / Quit | Gear icon in the board, or right-click the OKV icon in the Windows system tray |
+| Settings / Quit | Gear icon in the board, or right-click the OKV icon in the Windows system tray. Settings also shows which computers are on the network (with their versions, and when offline ones were last seen), and lets you save messages as a spreadsheet or back everything up |
 
 The first time it runs, the app asks which department the computer belongs to. You can change this later in Settings.
 
@@ -49,9 +54,15 @@ The installer puts the app in the current Windows user's profile, so future upda
 - A computer that was switched off catches up automatically the next time it starts, as long as any other computer that has the messages is on.
 - Messages are only accepted from private network addresses (192.168.x.x, 10.x.x.x, 172.16–31.x.x).
 
-"Delete for everyone", reactions and reminders travel between computers the same way messages do, so a computer that was off catches up when it starts.
+"Delete for everyone", reactions, reminders, edits, "seen" receipts and pinned notices travel between computers the same way messages do, so a computer that was off catches up when it starts.
 
 A GIF is stored once on each PC in `history\gifs\`, named by a fingerprint of its contents; the message only carries that fingerprint, and each PC fetches any GIF it is missing directly from another PC on the clinic network. (On PCs still on an older version, a GIF message shows as "[GIF]".)
+
+### Automatic tidy-up and backups
+
+Every computer keeps the last **14 days** of messages "live". Anything older is archived automatically when the app starts and every few hours afterwards: messages move to `history\archive\messages-YYYY-MM.jsonl` and their GIFs to `history\archive\gifs\`. Archived messages no longer show on the board, but they aren't lost: **Settings → History → Save as spreadsheet → Everything, including the archive** includes them. Messages that were deleted are not archived, and their GIFs are removed. The same rule runs on every computer, so they stay in step; the number of days is `RETENTION_DAYS` in `src/main/constants.js` (changing it needs a new release).
+
+**Settings → History** can also save a day or week of messages as a CSV spreadsheet, and **Back up everything** copies the whole `history` folder and the settings into a dated folder you choose (a USB drive or a network folder, say). To restore a backup, close OKV Messenger, copy the backup's `history` folder over `%APPDATA%\OKV Messenger\history`, and start it again.
 
 Each computer stores its history in `%APPDATA%\OKV Messenger\history\messages.jsonl`. Deleting never removes a message from that file: deletions are recorded separately (`deletions.jsonl` for everyone, `hidden.jsonl` for this computer only) and the message is just hidden from the board. Settings > "Open message history folder" opens it. Back up that file to keep a permanent copy.
 
@@ -111,6 +122,8 @@ $env:OKV_DATA_DIR = "$PWD\.dev-data\a"; $env:OKV_BIND = "127.0.0.1"; $env:OKV_UD
 $env:OKV_DATA_DIR = "$PWD\.dev-data\b"; $env:OKV_BIND = "127.0.0.1"; $env:OKV_UDP_PORT = "42334"; $env:OKV_TCP_PORT = "42335"; $env:OKV_PEERS = "127.0.0.1:42234"; npm start
 ```
 
+The development-only variable `OKV_TEST_PICK` (a folder path) makes the export and backup buttons save into that folder instead of opening file dialogs, so they can be tested automatically.
+
 ### Project layout
 
 ```
@@ -119,6 +132,7 @@ src/main/store.js      History on disk (messages, deletions, reactions, reminder
 src/main/network.js    Peer discovery (UDP) and sync (HTTP) between computers
 src/main/gifs.js      GIF files kept on this PC: checking, storing by fingerprint
 src/main/geometry.js   Window-resizing maths
+src/main/exporter.js   Saving messages as CSV, reading the archive, backups
 src/main/updater.js    Auto-update from GitHub Releases
 src/main/config.js     Per-computer settings (department, icon position, board size, …)
 src/preload.js         The safe bridge between the window and the main process

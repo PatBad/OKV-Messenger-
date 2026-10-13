@@ -71,6 +71,10 @@ class Network extends EventEmitter {
     deletions = null,
     reactions = null,
     reminders = null,
+    edits = null,
+    receipts = null,
+    pins = null,
+    version = null,
     gifs = null,
     peerId,
     getProfile,
@@ -99,6 +103,11 @@ class Network extends EventEmitter {
     if (reminders) {
       this.collections.push({ name: 'reminders', store: reminders, prefix: '/reminders', key: 'records', beacon: 'rm' });
     }
+    if (edits) this.collections.push({ name: 'edits', store: edits, prefix: '/edits', key: 'records', beacon: 'e' });
+    if (receipts) this.collections.push({ name: 'receipts', store: receipts, prefix: '/receipts', key: 'records', beacon: 'sn' });
+    if (pins) this.collections.push({ name: 'pins', store: pins, prefix: '/pins', key: 'records', beacon: 'pn' });
+    // This app's version, announced in every beacon so computers can see who has updated.
+    this.version = version;
     this.store = store;
     // GIF files. Messages only carry a GIF's fingerprint; the file itself is fetched
     // from whichever computer has it (GET /gifs/<fingerprint>).
@@ -151,7 +160,7 @@ class Network extends EventEmitter {
   /** Computers currently visible on the network. */
   peers() {
     return [...this.peerMap.values()]
-      .map(({ id, dept, host, address, port, lastSeen, reachable }) => ({ id, dept, host, address, port, lastSeen, reachable }))
+      .map(({ id, dept, host, address, port, lastSeen, reachable, ver }) => ({ id, dept, host, address, port, lastSeen, reachable, ver }))
       .sort((a, b) => (a.host || '').localeCompare(b.host || ''));
   }
 
@@ -410,6 +419,7 @@ class Network extends EventEmitter {
     const theyLack = [];
     for (const day of new Set([...Object.keys(remoteDays), ...Object.keys(local.days)])) {
       if (remoteDays[day] === local.days[day]) continue;
+      if (c.store.isOldDay(day)) continue; // past the tidy-up cutoff: not ours to exchange any more
       if (remoteDays[day] === undefined) theyLack.push(day);
       else mismatched.push(day);
     }
@@ -459,7 +469,7 @@ class Network extends EventEmitter {
 
   _self() {
     const profile = this.getProfile();
-    return { id: this.peerId, dept: profile.department, host: profile.host, port: this.tcpPort };
+    return { id: this.peerId, dept: profile.department, host: profile.host, port: this.tcpPort, ver: this.version };
   }
 
   /** Resolves once the discovery socket is listening, or has failed and a retry is scheduled. */
@@ -540,6 +550,7 @@ class Network extends EventEmitter {
     const address = normaliseAddress(rawAddress);
     const dept = DEPARTMENT_IDS.includes(info.dept) ? info.dept : null;
     const host = typeof info.host === 'string' ? info.host.slice(0, 64) : '';
+    const ver = typeof info.ver === 'string' && /^[0-9A-Za-z.\-+]{1,24}$/.test(info.ver) ? info.ver : null;
     let peer = this.peerMap.get(info.id);
     const isNew = !peer;
     if (!peer) {
@@ -548,8 +559,8 @@ class Network extends EventEmitter {
       this.peerMap.set(info.id, peer);
     }
     const changed =
-      isNew || peer.address !== address || peer.port !== info.port || peer.dept !== dept || peer.host !== host;
-    Object.assign(peer, { address, port: info.port, dept, host, lastSeen: Date.now() });
+      isNew || peer.address !== address || peer.port !== info.port || peer.dept !== dept || peer.host !== host || peer.ver !== ver;
+    Object.assign(peer, { address, port: info.port, dept, host, ver, lastSeen: Date.now() });
     if (changed) {
       if (isNew) this.log.info(`found ${peer.host} (${peer.address}:${peer.port})`);
       this.emit('peers', this.peers());

@@ -10,6 +10,9 @@ const DEFAULTS = {
   autoStart: true,
   iconPosition: null,
   panelSize: null, // { width, height } the board was last resized to
+  quickMessages: null, // the buttons above the message box; null means the defaults
+  quietUntil: null, // sounds are muted until this time
+  peerHistory: {}, // computers seen on the network recently, for the health view
   lastReadAt: 0,
   firstRunAt: null,
   peerId: null,

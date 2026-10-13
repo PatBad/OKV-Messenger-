@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
-const { DEPARTMENT_IDS, TO_ALL, GIF_PLACEHOLDER, LIMITS } = require('./constants');
+const { DEPARTMENT_IDS, TO_ALL, GIF_PLACEHOLDER, EDIT_WINDOW_MS, LIMITS } = require('./constants');
 
 const ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
 
@@ -152,6 +152,53 @@ function sanitizeReminderRecord(r) {
   return null;
 }
 
+/** A correction to a message's text, made by the department that sent it (honoured only within EDIT_WINDOW_MS). */
+function sanitizeEdit(r) {
+  if (!r || typeof r !== 'object') return null;
+  const { id, target, by, createdAt } = r;
+  const host = r.host ?? '';
+  if (!validId(id) || !validId(target) || !DEPARTMENT_IDS.includes(by) || !validHost(host) || !validTime(createdAt)) return null;
+  if (typeof r.text !== 'string') return null;
+  const text = r.text.trim();
+  if (!text || text.length > LIMITS.TEXT) return null;
+  return { v: 1, id, target, text, by, host, createdAt: Math.floor(createdAt) };
+}
+
+/**
+ * "Department `by` has seen message `target`". The id is derived from the two, so however many
+ * computers in a department see the message there's only ever one receipt per department.
+ */
+const receiptId = (target, by) => crypto.createHash('sha1').update(`${target}:${by}`).digest('hex');
+
+function sanitizeReceipt(r) {
+  if (!r || typeof r !== 'object') return null;
+  const { id, target, by, createdAt } = r;
+  const host = r.host ?? '';
+  if (!validId(target) || !DEPARTMENT_IDS.includes(by) || !validHost(host) || !validTime(createdAt)) return null;
+  if (id !== receiptId(target, by)) return null;
+  return { v: 1, id, target, by, host, createdAt: Math.floor(createdAt) };
+}
+
+/** The notice pinned at the top of everyone's board: type 'pin' (the notice) or 'clear' (takes one down). */
+function sanitizePin(r) {
+  if (!r || typeof r !== 'object' || !validId(r.id)) return null;
+  const host = r.host ?? '';
+  const byName = r.byName ?? '';
+  if (!DEPARTMENT_IDS.includes(r.by) || !validHost(host) || !validTime(r.createdAt)) return null;
+  if (typeof byName !== 'string' || byName.length > LIMITS.AUTHOR) return null;
+  const createdAt = Math.floor(r.createdAt);
+  if (r.type === 'pin') {
+    if (typeof r.text !== 'string') return null;
+    const text = r.text.trim();
+    if (!text || text.length > LIMITS.PIN) return null;
+    return { v: 1, type: 'pin', id: r.id, text, by: r.by, byName: byName.trim(), host, createdAt };
+  }
+  if (r.type === 'clear' && validId(r.target)) {
+    return { v: 1, type: 'clear', id: r.id, target: r.target, by: r.by, byName: byName.trim(), host, createdAt };
+  }
+  return null;
+}
+
 function toWire(record) {
   const { receivedAt, local, ...wire } = record;
   return wire;
@@ -198,7 +245,61 @@ class RecordLog extends EventEmitter {
     this.byId = new Map();
     this.total = new Digest();
     this.days = new Map();
+    // Set to a number of days to keep only that much history live (see archiveOld).
+    this.retentionDays = null;
+    this.archiveDir = path.join(dir, 'archive');
+    this.base = fileName.replace(/\.jsonl$/, '');
   }
+
+  /** The earliest day (YYYY-MM-DD, UTC) still kept live, or null when nothing is archived. */
+  cutoffDay(now = Date.now()) {
+    return this.retentionDays ? dayKey(now - this.retentionDays * 86400000) : null;
+  }
+
+  isOldDay(day, now = Date.now()) {
+    const cutoff = this.cutoffDay(now);
+    return cutoff !== null && day < cutoff;
+  }
+
+  /**
+   * Moves records from days before the cutoff out of the live history into archive/<name>-YYYY-MM.jsonl.
+   * `drop(record)` can discard a record instead (e.g. a message that was deleted). Returns what was archived.
+   */
+  archiveOld(now = Date.now(), { drop = null } = {}) {
+    const cutoff = this.cutoffDay(now);
+    if (!cutoff) return [];
+    const old = [];
+    const keep = [];
+    for (const r of this.byId.values()) (dayKey(r.createdAt) < cutoff ? old : keep).push(r);
+    if (!old.length) return [];
+
+    const byMonth = new Map();
+    for (const r of old) {
+      if (drop && drop(r)) continue;
+      const month = dayKey(r.createdAt).slice(0, 7);
+      if (!byMonth.has(month)) byMonth.set(month, []);
+      byMonth.get(month).push(JSON.stringify(r));
+    }
+    fs.mkdirSync(this.archiveDir, { recursive: true });
+    for (const [month, lines] of byMonth) fs.appendFileSync(path.join(this.archiveDir, `${this.base}-${month}.jsonl`), lines.join('\n') + '\n');
+
+    // Archive first, then shrink the live file, so a crash in between can only leave duplicates.
+    const tmp = `${this.file}.tmp`;
+    fs.writeFileSync(tmp, keep.map((r) => JSON.stringify(r)).join('\n') + (keep.length ? '\n' : ''));
+    fs.renameSync(tmp, this.file);
+
+    this.byId = new Map();
+    this.total = new Digest();
+    this.days = new Map();
+    this._reset();
+    for (const r of keep) this._index(r, true);
+    this._loaded();
+    this.emit('archived', old);
+    return old;
+  }
+
+  /** Subclass hook: forget derived indexes before they're rebuilt. */
+  _reset() {}
 
   load() {
     fs.mkdirSync(this.dir, { recursive: true });
@@ -254,6 +355,7 @@ class RecordLog extends EventEmitter {
     for (const raw of records) {
       const record = this.sanitize(raw);
       if (!record || this.byId.has(record.id) || seen.has(record.id)) continue;
+      if (this.isOldDay(dayKey(record.createdAt), now)) continue; // already past the point of being kept
       seen.add(record.id);
       record.receivedAt = now;
       if (local) record.local = true;
@@ -314,6 +416,10 @@ class MessageStore extends RecordLog {
     else this._insertSorted(msg);
   }
 
+  _reset() {
+    this.sorted = [];
+  }
+
   _loaded() {
     this.sorted.sort(compareRecords);
   }
@@ -341,7 +447,7 @@ class MessageStore extends RecordLog {
    * matches exist. Messages for which `exclude` returns true are skipped, and
    * `after` (a timestamp) leaves out anything older.
    */
-  query({ filter = 'all', department = null, search = '', before = null, after = null, limit = 200, exclude = null } = {}) {
+  query({ filter = 'all', department = null, search = '', before = null, after = null, limit = 200, exclude = null, textOf = null } = {}) {
     const needle = search.trim().toLowerCase();
     const out = [];
     let more = false;
@@ -352,7 +458,7 @@ class MessageStore extends RecordLog {
       if (filter === 'to-us' && m.to !== department) continue;
       if (filter === 'from-us' && m.from !== department) continue;
       if (filter === 'urgent' && !m.urgent) continue;
-      if (needle && !m.text.toLowerCase().includes(needle) && !m.author.toLowerCase().includes(needle)) continue;
+      if (needle && !(textOf ? textOf(m) : m.text).toLowerCase().includes(needle) && !m.author.toLowerCase().includes(needle)) continue;
       if (exclude && exclude(m)) continue;
       if (out.length === limit) {
         more = true;
@@ -368,12 +474,12 @@ class MessageStore extends RecordLog {
    * or why there's nothing to show ('removed' if it was deleted, 'missing' if it hasn't reached this computer).
    * A deleted message's text is never quoted.
    */
-  quote(id, exclude = null) {
+  quote(id, exclude = null, textOf = null) {
     const original = this.byId.get(id);
     if (!original) return { state: 'missing' };
     if (exclude && exclude(original)) return { state: 'removed' };
     const isGifOnly = Boolean(original.gif) && original.text === GIF_PLACEHOLDER;
-    const flat = isGifOnly ? '' : original.text.replace(/\s+/g, ' ').trim();
+    const flat = isGifOnly ? '' : (textOf ? textOf(original) : original.text).replace(/\s+/g, ' ').trim();
     return {
       state: 'ok',
       id: original.id,
@@ -407,6 +513,10 @@ class DeletionLog extends RecordLog {
     this.byTarget = new Map();
   }
 
+  _reset() {
+    this.byTarget = new Map();
+  }
+
   _track(record) {
     const list = this.byTarget.get(record.target);
     if (list) list.push(record);
@@ -433,6 +543,10 @@ class DeletionLog extends RecordLog {
 class ReactionLog extends RecordLog {
   constructor(dir) {
     super(dir, 'reactions.jsonl', sanitizeReaction);
+    this.byTarget = new Map();
+  }
+
+  _reset() {
     this.byTarget = new Map();
   }
 
@@ -490,6 +604,11 @@ class ReminderLog extends RecordLog {
     this.statuses = new Map();
   }
 
+  _reset() {
+    this.reminders = new Map();
+    this.statuses = new Map();
+  }
+
   _track(record) {
     if (record.type === 'reminder') {
       this.reminders.set(record.id, record);
@@ -533,6 +652,87 @@ class ReminderLog extends RecordLog {
       names.push(r.name);
     }
     return names;
+  }
+}
+
+/** Corrections to message text, shared between computers. */
+class EditLog extends RecordLog {
+  constructor(dir) {
+    super(dir, 'edits.jsonl', sanitizeEdit);
+    this.byTarget = new Map();
+  }
+
+  _reset() {
+    this.byTarget = new Map();
+  }
+
+  _track(record) {
+    const list = this.byTarget.get(record.target);
+    if (list) list.push(record);
+    else this.byTarget.set(record.target, [record]);
+  }
+
+  /**
+   * The latest valid edit of `message`, or null. Only the department that sent it may edit, and only within
+   * EDIT_WINDOW_MS of sending, so a later forged edit is ignored by every computer.
+   */
+  latest(message) {
+    let best = null;
+    for (const e of this.byTarget.get(message.id) || []) {
+      const inWindow = e.createdAt >= message.createdAt && e.createdAt - message.createdAt <= EDIT_WINDOW_MS;
+      if (e.by === message.from && inWindow && (!best || compareRecords(e, best) > 0)) best = e;
+    }
+    return best;
+  }
+}
+
+/** Which departments have seen which messages. */
+class ReceiptLog extends RecordLog {
+  constructor(dir) {
+    super(dir, 'receipts.jsonl', sanitizeReceipt);
+    this.byTarget = new Map();
+  }
+
+  _reset() {
+    this.byTarget = new Map();
+  }
+
+  _track(record) {
+    const list = this.byTarget.get(record.target);
+    if (list) list.push(record);
+    else this.byTarget.set(record.target, [record]);
+  }
+
+  hasSeen(target, by) {
+    return this.byId.has(receiptId(target, by));
+  }
+
+  /** [{ dept, at }] for a message, earliest first. */
+  seenBy(target) {
+    return (this.byTarget.get(target) || []).map((r) => ({ dept: r.by, at: r.createdAt })).sort((a, b) => a.at - b.at);
+  }
+}
+
+/** The notice pinned at the top of everyone's board. */
+class PinLog extends RecordLog {
+  constructor(dir) {
+    super(dir, 'pins.jsonl', sanitizePin);
+    this.cleared = new Set();
+  }
+
+  _reset() {
+    this.cleared = new Set();
+  }
+
+  _track(record) {
+    if (record.type === 'clear') this.cleared.add(record.target);
+  }
+
+  /** The notice to show: the newest one, unless it has been cleared. A newer notice replaces an older one. */
+  current() {
+    let latest = null;
+    for (const r of this.byId.values()) if (r.type === 'pin' && (!latest || compareRecords(r, latest) > 0)) latest = r;
+    return latest && !this.cleared.has(latest.id) ? latest : null;
   }
 }
 
@@ -598,12 +798,19 @@ module.exports = {
   DeletionLog,
   ReactionLog,
   ReminderLog,
+  EditLog,
+  ReceiptLog,
+  PinLog,
   LocalHides,
   sanitizeMessage,
   sanitizeGif,
   sanitizeDeletion,
   sanitizeReaction,
   sanitizeReminderRecord,
+  sanitizeEdit,
+  sanitizeReceipt,
+  sanitizePin,
+  receiptId,
   toWire,
   dayKey,
   isUnread,

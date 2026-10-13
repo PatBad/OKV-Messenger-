@@ -12,6 +12,23 @@ const DEPARTMENT_IDS = DEPARTMENTS.map((d) => d.id);
 // Recipient value meaning "every department".
 const TO_ALL = 'all';
 
+// Messages and GIFs older than this are moved to the archive folder automatically. The same rule
+// runs on every computer, so they all agree on what's still "live" and stay in sync.
+const RETENTION_DAYS = 14;
+
+// How long after sending a message its sender may still edit it.
+const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+// Buttons offered above the message box until someone changes them in Settings.
+const DEFAULT_QUICK_MESSAGES = [
+  { text: 'Client has arrived', to: 'clinical', urgent: false },
+  { text: 'Estimate is ready', to: 'reception', urgent: false },
+  { text: 'Lab results are back', to: 'clinical', urgent: false },
+  { text: 'Need a hand in theatre', to: 'clinical', urgent: true },
+  { text: 'Call me when you have a minute', to: 'all', urgent: false },
+];
+const MAX_QUICK_MESSAGES = 8;
+
 // A GIF message carries this as its text, so computers on versions that predate GIFs
 // (which reject messages without text) still accept it and show "[GIF]".
 const GIF_PLACEHOLDER = '[GIF]';
@@ -37,6 +54,7 @@ const NETWORK = {
 const LIMITS = {
   TEXT: 4000,
   REMINDER: 1000,
+  PIN: 300,
   // Largest GIF that can be sent (computers keep every GIF that's sent).
   GIF_BYTES: 4 * 1024 * 1024,
   AUTHOR: 40,
@@ -46,4 +64,16 @@ const LIMITS = {
   MAX_TS: Date.UTC(2100, 0, 1),
 };
 
-module.exports = { DEPARTMENTS, DEPARTMENT_IDS, TO_ALL, GIF_PLACEHOLDER, REACTIONS, NETWORK, LIMITS };
+module.exports = {
+  DEPARTMENTS,
+  DEPARTMENT_IDS,
+  TO_ALL,
+  GIF_PLACEHOLDER,
+  REACTIONS,
+  RETENTION_DAYS,
+  EDIT_WINDOW_MS,
+  DEFAULT_QUICK_MESSAGES,
+  MAX_QUICK_MESSAGES,
+  NETWORK,
+  LIMITS,
+};

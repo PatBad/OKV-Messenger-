@@ -43,6 +43,28 @@ const el = {
   replyWho: $('reply-who'),
   replySnippet: $('reply-snippet'),
   replyCancel: $('reply-cancel'),
+  quickRow: $('quick-row'),
+  quietBtn: $('quiet-btn'),
+  quietLeft: $('quiet-left'),
+  quietMenu: $('quiet-menu'),
+  pinBanner: $('pin-banner'),
+  pinText: $('pin-text'),
+  pinMeta: $('pin-meta'),
+  pinClear: $('pin-clear'),
+  togglePin: $('toggle-pin'),
+  pinForm: $('pin-form'),
+  pinInput: $('pin-input'),
+  pinCancel: $('pin-cancel'),
+  quickEdit: $('quick-edit'),
+  quickAdd: $('quick-add'),
+  quickReset: $('quick-reset'),
+  peerSelf: $('peer-self'),
+  tidyNote: $('tidy-note'),
+  exportRange: $('export-range'),
+  exportBtn: $('export-btn'),
+  backupBtn: $('backup-btn'),
+  openArchive: $('open-archive'),
+  historyResult: $('history-result'),
   gifAttached: $('gif-attached'),
   gifThumb: $('gif-thumb'),
   gifName: $('gif-name'),
@@ -96,6 +118,14 @@ const state = {
   sending: false,
   gif: null, // the GIF waiting to be sent: { data, name, size, url }
   reply: null, // the message being replied to: { id, from, author, text, gif }
+  pin: null, // the notice pinned for everyone: { text, by, name, at }
+  editing: null, // id of the message being edited, with its unsaved wording in editDraft
+  editDraft: null,
+  editWindowMs: 15 * 60 * 1000,
+  retentionDays: 14,
+  maxQuick: 8,
+  quickDraft: null, // the quick-message list being edited in Settings
+  peerReport: null,
   gifMaxBytes: 4 * 1024 * 1024,
   hasUrgentUnread: false,
   // Days the user has opened or closed (dayKey -> open). Otherwise only today is open.
@@ -152,6 +182,12 @@ function dayLabel(ts) {
 
 // Static, trusted SVG markup for small icons.
 const ICONS = {
+  bell: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
+  bellOff:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-9.3-5"/><path d="M6.3 6.3A6 6 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/><path d="M2 2l20 20"/></svg>',
+  pin: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6Z"/></svg>',
+  pencil: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="M13.5 6.5l4 4"/></svg>',
+  more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><circle cx="19" cy="12" r="1.7" fill="currentColor"/></svg>',
   reply:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/></svg>',
   trash:
@@ -197,6 +233,7 @@ function toast(message, action = null) {
 let audio;
 function chime(urgent) {
   if (!state.settings.sound) return;
+  if (quietActive() && !urgent) return;
   try {
     audio = audio || new AudioContext();
     const notes = urgent ? [988, 784, 988, 784, 988] : [659, 880];
@@ -241,6 +278,7 @@ function applyView({ expanded, origin, lastReadAt }) {
   if (origin) $('panel').style.transformOrigin = origin;
   if (opening) {
     state.newSince = lastReadAt || 0;
+    refreshPin();
     showScreen(state.settings.department ? state.section : 'onboarding');
     refresh({ toBottom: true });
     if (state.screen === 'board') el.text.focus();
@@ -427,6 +465,7 @@ async function chooseDepartment(id) {
   renderHeader();
   renderComposeTargets();
   renderReminderTargets();
+  renderQuick();
   if (firstTime) {
     showScreen('board');
     toast(`This computer now sends as ${deptLabel(id)}`);
@@ -474,7 +513,7 @@ function messageNode(m) {
   const toUs = m.to !== 'all' && m.to === dept;
   return h(
     'article',
-    { class: ['msg', `dept-${m.from}`, m.urgent && 'is-urgent', m.local && 'is-mine', isNew(m) && 'is-new'], 'data-id': m.id },
+    { class: ['msg', `dept-${m.from}`, m.urgent && 'is-urgent', m.local && 'is-mine', isNew(m) && 'is-new'], 'data-id': m.id, 'data-unseen': m.seenByMe === false ? '1' : null },
     h(
       'header',
       { class: 'msg-head' },
@@ -482,13 +521,15 @@ function messageNode(m) {
       m.author ? h('span', { class: 'msg-author' }, m.author) : null,
       h('span', { class: ['msg-to', toUs && 'is-us'], title: toUs ? `To ${toLabel(m.to)}` : null }, `→ ${toUs ? 'You' : toLabel(m.to)}`),
       m.urgent ? h('span', { class: 'msg-tag' }, 'Urgent') : null,
+      m.editedAt ? h('span', { class: 'msg-edited', title: `Edited ${fullFmt.format(m.editedAt)}` }, 'edited') : null,
       h('time', { class: 'msg-time', datetime: new Date(m.createdAt).toISOString(), title: fullFmt.format(m.createdAt) }, timeFmt.format(m.createdAt)),
     ),
     quoteNode(m),
     // A GIF message has "[GIF]" as its text unless the sender typed a caption.
-    m.gif && m.text === GIF_PLACEHOLDER ? null : h('p', { class: 'msg-text' }, m.text),
+    state.editing === m.id ? editorNode(m) : m.gif && m.text === GIF_PLACEHOLDER ? null : h('p', { class: 'msg-text' }, m.text),
     gifNode(m),
     reactionsNode(m),
+    seenNode(m),
     // Shown while pointing at the message: react, or delete.
     h(
       'div',
@@ -510,6 +551,7 @@ function messageNode(m) {
         );
       }),
       h('span', { class: 'msg-actions-sep' }),
+      h('button', { type: 'button', class: 'msg-more', title: 'More', 'aria-label': 'More actions', onclick: (e) => toggleMessageMenu(e.currentTarget.closest('.msg'), m) }, icon('more')),
       h(
         'button',
         {
@@ -780,6 +822,7 @@ function renderList({ toBottom = false, keepTop = false, anchorDay = null } = {}
     );
   }
   list.replaceChildren(...nodes);
+  observeSeen();
 
   // Put the banner back where it was, measured from its day's (non-sticky) start.
   const newAnchor = anchorOffset !== null && list.querySelector(`.day-group[data-day="${anchorDay}"]`);
@@ -876,6 +919,494 @@ function updateSendState() {
   el.send.disabled = state.sending || (!el.text.value.trim() && !state.gif);
 }
 
+// ---------- Seen-by, edits, quick messages, quiet mode, pinned notice ----------
+
+/** The readable part of an error thrown by the main process. */
+const errText = (err) => String((err && err.message) || err).split('Error: ').pop();
+
+// Seen: a message counts as seen once it has been on screen for a second while the board is in use.
+let lastActive = Date.now();
+for (const type of ['pointermove', 'pointerdown', 'keydown']) {
+  document.addEventListener(type, () => (lastActive = Date.now()), { passive: true, capture: true });
+}
+window.addEventListener('focus', () => (lastActive = Date.now()));
+const seenTimers = new Map();
+const pendingSeen = new Set();
+let flushSeenTimer = null;
+const boardInUse = () => state.expanded && state.screen === 'board' && (document.hasFocus() || Date.now() - lastActive < 5 * 60 * 1000);
+
+function flushSeen() {
+  flushSeenTimer = null;
+  if (!pendingSeen.size) return;
+  const ids = [...pendingSeen];
+  pendingSeen.clear();
+  okv.markSeen(ids).catch(() => {});
+}
+
+const seenObserver = new IntersectionObserver(
+  (entries) => {
+    for (const en of entries) {
+      const id = en.target.dataset.id;
+      const tall = en.rootBounds ? en.rootBounds.height * 0.5 : Infinity; // a long message counts when half the list is it
+      const enough = en.isIntersecting && (en.intersectionRatio >= 0.6 || en.intersectionRect.height >= tall);
+      if (enough) {
+        if (seenTimers.has(id)) continue;
+        seenTimers.set(
+          id,
+          setTimeout(() => {
+            seenTimers.delete(id);
+            if (!boardInUse()) return;
+            pendingSeen.add(id);
+            flushSeenTimer = flushSeenTimer || setTimeout(flushSeen, 400);
+          }, 1000),
+        );
+      } else if (seenTimers.has(id)) {
+        clearTimeout(seenTimers.get(id));
+        seenTimers.delete(id);
+      }
+    }
+  },
+  { root: el.list, threshold: [0, 0.3, 0.6, 1] },
+);
+
+/** Watches the messages sent to us that this department hasn't been marked as seeing yet. */
+function observeSeen() {
+  seenObserver.disconnect();
+  for (const timer of seenTimers.values()) clearTimeout(timer);
+  seenTimers.clear();
+  for (const node of el.list.querySelectorAll('.msg[data-unseen]')) seenObserver.observe(node);
+}
+
+/** Under a message we sent: who has seen it. */
+function seenNode(m) {
+  if (!m.seen) return null;
+  const { intended, seen } = m.seen;
+  const seenDepts = seen.map((x) => x.dept);
+  const waiting = intended.filter((d) => !seenDepts.includes(d));
+  let text;
+  if (m.to !== 'all') {
+    text = seen.length ? `✓ Seen by ${deptLabel(m.to)} · ${timeFmt.format(seen[0].at)}` : `Not seen yet by ${deptLabel(m.to)}`;
+  } else if (!seen.length) {
+    text = 'Not seen yet';
+  } else if (!waiting.length) {
+    text = '✓ Seen by everyone';
+  } else {
+    text = `✓ Seen by ${seen.map((x) => deptLabel(x.dept)).join(', ')}`;
+  }
+  const details = [...seen.map((x) => `${deptLabel(x.dept)} saw it at ${timeFmt.format(x.at)}`), ...(waiting.length ? [`Not yet: ${waiting.map(deptLabel).join(', ')}`] : [])];
+  return h('div', { class: ['msg-seen', seen.length && !waiting.length && 'is-all', !seen.length && 'is-none'], title: details.join('\n') }, text);
+}
+
+// --- editing a message ---
+
+const canEdit = (m) => m.from === state.settings.department && Date.now() - m.createdAt <= state.editWindowMs;
+
+function editorNode(m) {
+  if (state.editDraft === null) state.editDraft = m.gif && m.text === GIF_PLACEHOLDER ? '' : m.text;
+  const save = h('button', { type: 'button', class: 'chip is-done', onclick: () => saveEdit(m) }, 'Save');
+  const box = h('textarea', { class: 'msg-edit-input', rows: '2', maxlength: '4000', 'aria-label': 'Edit message' });
+  box.value = state.editDraft;
+  save.disabled = !box.value.trim();
+  box.addEventListener('input', () => {
+    state.editDraft = box.value;
+    save.disabled = !box.value.trim();
+  });
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      saveEdit(m);
+    }
+  });
+  return h(
+    'div',
+    { class: 'msg-edit' },
+    box,
+    h('div', { class: 'msg-edit-actions' }, save, h('button', { type: 'button', class: 'chip is-quiet', onclick: cancelEdit }, 'Cancel'), h('span', { class: 'msg-edit-hint' }, 'Enter saves · Esc cancels')),
+  );
+}
+
+function startEdit(m) {
+  closeMessageMenus();
+  state.editing = m.id;
+  state.editDraft = null;
+  renderList();
+  const box = el.list.querySelector('.msg-edit-input');
+  if (box) {
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+    box.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function cancelEdit() {
+  state.editing = null;
+  state.editDraft = null;
+  renderList();
+}
+
+async function saveEdit(m) {
+  const text = (state.editDraft ?? '').trim();
+  if (!text) return;
+  try {
+    if (text !== m.text) await okv.editMessage({ id: m.id, text });
+    state.editing = null;
+    state.editDraft = null;
+    await refresh();
+  } catch (err) {
+    toast(errText(err));
+  }
+}
+
+// --- the "more" menu on a message ---
+
+function closeMessageMenus() {
+  for (const menu of el.list.querySelectorAll('.msg-menu')) {
+    menu.closest('.msg').classList.remove('menu-open');
+    menu.remove();
+  }
+}
+
+function toggleMessageMenu(article, m) {
+  const wasOpen = Boolean(article.querySelector('.msg-menu'));
+  closeMessageMenus();
+  if (wasOpen) return;
+  const item = (label, iconName, run) =>
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'msg-menu-item',
+        role: 'menuitem',
+        onclick: () => {
+          closeMessageMenus();
+          run();
+        },
+      },
+      icon(iconName),
+      label,
+    );
+  const items = [];
+  if (canEdit(m)) items.push(item('Edit message', 'pencil', () => startEdit(m)));
+  items.push(item('Pin as a notice for everyone', 'pin', () => pinFromMessage(m)));
+  article.classList.add('menu-open');
+  article.append(h('div', { class: 'msg-menu', role: 'menu' }, ...items));
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('.msg-menu, .msg-more')) closeMessageMenus();
+  if (!e.target.closest('.quiet-menu, .quiet-btn')) el.quietMenu.hidden = true;
+});
+
+/** Closes whatever is floating (menus, the notice box, an edit). Returns whether there was anything to close. */
+function closeFloating() {
+  let closed = false;
+  if (el.list.querySelector('.msg-menu')) {
+    closeMessageMenus();
+    closed = true;
+  }
+  if (!el.quietMenu.hidden) {
+    el.quietMenu.hidden = true;
+    closed = true;
+  }
+  if (!el.pinForm.hidden) {
+    el.pinForm.hidden = true;
+    closed = true;
+  }
+  if (state.editing) {
+    cancelEdit();
+    closed = true;
+  }
+  return closed;
+}
+
+// --- quick messages ---
+
+function renderQuick() {
+  const list = state.settings.quickMessages || [];
+  el.quickRow.hidden = !list.length || !state.settings.department;
+  el.quickRow.replaceChildren(
+    ...list.map((q) =>
+      h(
+        'button',
+        {
+          type: 'button',
+          class: ['quick', q.urgent && 'is-urgent'],
+          title: `Sends “${q.text}” to ${toLabel(q.to)}${q.urgent ? ' as urgent' : ''}`,
+          onclick: () => sendQuick(q),
+        },
+        q.text,
+      ),
+    ),
+  );
+}
+
+async function sendQuick(q) {
+  try {
+    const message = await okv.sendMessage({ to: q.to, text: q.text, urgent: q.urgent, author: el.author.value });
+    const short = q.text.length > 34 ? `${q.text.slice(0, 34)}…` : q.text;
+    toast(`Sent to ${toLabel(q.to)}: ${short}`, {
+      label: 'Undo',
+      run: () => okv.deleteMessage({ id: message.id, scope: 'everyone' }).catch(() => toast('Couldn’t undo that')),
+    });
+  } catch {
+    toast('Couldn’t send that');
+  }
+}
+
+function renderQuickEditor() {
+  if (!state.quickDraft) state.quickDraft = (state.settings.quickMessages || []).map((q) => ({ ...q }));
+  const list = state.quickDraft;
+  const save = async () => {
+    state.settings = await okv.setSettings({ quickMessages: list.filter((q) => q.text.trim()) });
+    renderQuick();
+  };
+  el.quickEdit.replaceChildren(
+    ...list.map((q, i) => {
+      const text = h('input', { type: 'text', maxlength: '200', placeholder: 'Message', 'aria-label': 'Quick message', spellcheck: 'true' });
+      text.value = q.text;
+      text.addEventListener('input', () => (q.text = text.value));
+      text.addEventListener('change', save);
+      const to = h(
+        'select',
+        { 'aria-label': 'Send to' },
+        h('option', { value: 'all' }, 'Everyone'),
+        ...state.departments.map((d) => h('option', { value: d.id }, d.label)),
+      );
+      to.value = q.to;
+      to.addEventListener('change', () => {
+        q.to = to.value;
+        save();
+      });
+      const urgent = h('input', { type: 'checkbox', 'aria-label': 'Urgent' });
+      urgent.checked = q.urgent;
+      urgent.addEventListener('change', () => {
+        q.urgent = urgent.checked;
+        save();
+      });
+      return h(
+        'li',
+        { class: 'quick-edit-row' },
+        text,
+        h('div', { class: 'quick-edit-opts' }, h('span', null, 'to'), to, h('label', { class: 'quick-urgent' }, urgent, 'Urgent'), h('button', { type: 'button', class: 'icon-btn small', title: 'Remove', 'aria-label': 'Remove this button', onclick: () => { list.splice(i, 1); save(); renderQuickEditor(); } }, icon('trash'))),
+      );
+    }),
+  );
+  el.quickAdd.disabled = list.length >= state.maxQuick;
+}
+
+el.quickAdd.addEventListener('click', () => {
+  state.quickDraft.push({ text: '', to: 'all', urgent: false });
+  renderQuickEditor();
+  const inputs = el.quickEdit.querySelectorAll('input[type=text]');
+  inputs[inputs.length - 1].focus();
+});
+el.quickReset.addEventListener('click', async () => {
+  state.settings = await okv.setSettings({ resetQuickMessages: true });
+  state.quickDraft = null;
+  renderQuickEditor();
+  renderQuick();
+});
+
+// --- quiet mode ---
+
+const quietActive = () => Number.isFinite(state.settings.quietUntil) && Date.now() < state.settings.quietUntil;
+
+function renderQuiet() {
+  const on = quietActive();
+  el.quietBtn.classList.toggle('is-quiet', on);
+  el.quietBtn.replaceChildren(icon(on ? 'bellOff' : 'bell'), el.quietLeft);
+  el.quietLeft.hidden = !on;
+  if (on) {
+    const minutes = Math.ceil((state.settings.quietUntil - Date.now()) / 60000);
+    el.quietLeft.textContent = minutes >= 60 ? `${Math.ceil(minutes / 60)}h` : `${minutes}m`;
+    el.quietBtn.title = `Quiet until ${timeFmt.format(state.settings.quietUntil)}. Click to change.`;
+  } else {
+    el.quietBtn.title = 'Quiet mode: mute sounds for a while';
+  }
+  const choose = async (minutes) => {
+    state.settings = await okv.setQuiet(minutes);
+    el.quietMenu.hidden = true;
+    renderQuiet();
+  };
+  const option = (label, minutes) => h('button', { type: 'button', class: 'quiet-option', role: 'menuitem', onclick: () => choose(minutes) }, label);
+  el.quietMenu.replaceChildren(
+    option('Quiet for 30 minutes', 30),
+    option('Quiet for 1 hour', 60),
+    ...(on ? [option('Turn sounds back on', 0)] : []),
+    h('p', { class: 'quiet-note' }, 'The badge still shows new messages. Urgent messages still make a sound.'),
+  );
+}
+
+el.quietBtn.addEventListener('click', () => {
+  el.quietMenu.hidden = !el.quietMenu.hidden;
+});
+setInterval(renderQuiet, 20000); // counts down, and switches itself off when the time is up
+
+// --- the notice pinned at the top ---
+
+function renderPin() {
+  const pin = state.pin;
+  el.pinBanner.hidden = !pin;
+  if (pin) {
+    el.pinText.textContent = pin.text;
+    el.pinMeta.textContent = `Pinned by ${deptLabel(pin.by)}${pin.name ? ` · ${pin.name}` : ''} · ${whenLabel(pin.at)}`;
+  }
+}
+
+async function refreshPin() {
+  state.pin = await okv.getPin();
+  renderPin();
+}
+
+async function setNotice(text, undoTo) {
+  try {
+    state.pin = await okv.setPin(text);
+    renderPin();
+    toast('Pinned for everyone', {
+      label: 'Undo',
+      run: async () => {
+        state.pin = undoTo ? await okv.setPin(undoTo.text) : await okv.clearPin();
+        renderPin();
+      },
+    });
+  } catch (err) {
+    toast(errText(err));
+  }
+}
+
+function pinFromMessage(m) {
+  if (m.gif && m.text === GIF_PLACEHOLDER) {
+    toast('That message is only a GIF, so there’s no text to pin');
+    return;
+  }
+  const text = m.text.length > 300 ? `${m.text.slice(0, 299).trimEnd()}…` : m.text;
+  setNotice(text, state.pin);
+}
+
+el.togglePin.addEventListener('click', () => {
+  el.pinForm.hidden = !el.pinForm.hidden;
+  if (!el.pinForm.hidden) el.pinInput.focus();
+});
+el.pinCancel.addEventListener('click', () => (el.pinForm.hidden = true));
+el.pinForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = el.pinInput.value.trim();
+  if (!text) return;
+  el.pinForm.hidden = true;
+  el.pinInput.value = '';
+  await setNotice(text, state.pin);
+});
+el.pinClear.addEventListener('click', async () => {
+  const old = state.pin;
+  state.pin = await okv.clearPin();
+  renderPin();
+  toast('Notice taken down', {
+    label: 'Undo',
+    run: async () => {
+      state.pin = await okv.setPin(old.text);
+      renderPin();
+    },
+  });
+});
+
+// --- computers on the network, and history ---
+
+async function loadPeerReport() {
+  state.peerReport = await okv.peersReport();
+  renderPeerReport();
+}
+
+/** Negative if version a is older than b. */
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+  return 0;
+}
+
+function agoLabel(ts) {
+  const minutes = Math.floor((Date.now() - ts) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  return whenLabel(ts);
+}
+
+function renderPeerReport() {
+  const report = state.peerReport;
+  if (!report) return;
+  const { self, peers } = report;
+  el.peerSelf.textContent = `This computer: ${self.host}${self.dept ? ` · ${deptLabel(self.dept)}` : ''} · version ${self.version}`;
+  if (!peers.length) {
+    el.peerList.replaceChildren(h('li', null, h('span', { class: 'peer-empty' }, 'No other computers seen yet. They appear here automatically while OKV Messenger is running on them.')));
+    return;
+  }
+  el.peerList.replaceChildren(
+    ...peers.map((p) => {
+      let versionText;
+      let versionClass;
+      if (!p.ver) [versionText, versionClass] = ['older version', 'is-old'];
+      else if (compareVersions(p.ver, self.version) < 0) [versionText, versionClass] = [`${p.ver} · needs update`, 'is-old'];
+      else [versionText, versionClass] = [`${p.ver}`, 'is-current'];
+      const status = p.online ? (p.reachable === false ? 'online, but not accepting connections' : 'online') : `offline · last seen ${agoLabel(p.lastSeen)}`;
+      return h(
+        'li',
+        { class: ['peer', `dept-${p.dept}`, !p.online && 'is-offline'], title: p.reachable === false ? 'Seen, but not accepting connections (check its firewall)' : null },
+        h('span', { class: ['peer-dot', p.online && 'is-online'] }),
+        h('div', { class: 'peer-main' }, h('span', { class: 'peer-name' }, p.host || p.address), h('span', { class: 'peer-sub' }, `${p.dept ? deptLabel(p.dept) : 'No department'} · ${status}`)),
+        h('span', { class: ['peer-ver', versionClass] }, versionText),
+      );
+    }),
+  );
+}
+setInterval(() => {
+  if (state.expanded && state.screen === 'settings') loadPeerReport();
+}, 15000);
+
+function renderHistorySection() {
+  el.tidyNote.textContent = `Messages and GIFs older than ${state.retentionDays} days are archived automatically on every computer. They leave the board but are kept in the archive folder, and “Everything” exports include them.`;
+  el.historyResult.hidden = true;
+}
+
+function showHistoryResult(text) {
+  el.historyResult.textContent = text;
+  el.historyResult.hidden = false;
+}
+
+el.exportBtn.addEventListener('click', async () => {
+  el.exportBtn.disabled = true;
+  try {
+    const result = await okv.exportMessages({ range: el.exportRange.value });
+    if (!result.canceled) showHistoryResult(`Saved ${result.count} message${result.count === 1 ? '' : 's'} to ${result.path}`);
+  } catch {
+    showHistoryResult('Couldn’t save that. Please try again.');
+  } finally {
+    el.exportBtn.disabled = false;
+  }
+});
+
+el.backupBtn.addEventListener('click', async () => {
+  el.backupBtn.disabled = true;
+  try {
+    const result = await okv.backupHistory();
+    if (!result.canceled) showHistoryResult(`Backup saved (${result.files} files, ${formatSize(result.bytes)}) in ${result.path}`);
+  } catch {
+    showHistoryResult('Couldn’t make the backup. Please try again.');
+  } finally {
+    el.backupBtn.disabled = false;
+  }
+});
+
+el.openArchive.addEventListener('click', () => okv.openArchiveFolder());
+
+// A notice was pinned or taken down on another computer.
+okv.onPinsChanged(({ alert }) => {
+  refreshPin();
+  if (alert) {
+    chime(false);
+    if (!state.expanded) bump();
+  }
+});
+
 // ---------- Replies ----------
 
 /** The quote shown above a reply: who sent the original and a snippet, which jumps to it when clicked. */
@@ -883,7 +1414,7 @@ function quoteNode(m) {
   if (!m.replyTo) return null;
   const q = m.reply;
   if (!q || q.state !== 'ok') {
-    const why = q && q.state === 'removed' ? 'The original message was deleted' : 'The original message isn’t on this computer';
+    const why = q && q.state === 'removed' ? 'The original message was deleted' : 'The original message is no longer available';
     return h('div', { class: 'msg-quote is-gone' }, why);
   }
   return h(
@@ -1337,30 +1868,16 @@ function renderSettings() {
   deptButtons(el.settingsDepts, true);
   el.optSound.checked = !!state.settings.sound;
   el.optAutostart.checked = !!state.settings.autoStart;
-  renderPeers();
+  state.quickDraft = null;
+  renderQuickEditor();
+  loadPeerReport();
+  renderHistorySection();
   renderUpdate();
 }
 
 function renderPeers() {
-  renderHeader();
-  if (!state.peers.length) {
-    el.peerList.replaceChildren(
-      h('li', null, h('span', { class: 'peer-empty' }, 'None yet. Other computers appear here automatically while OKV Messenger is running on them.')),
-    );
-    return;
-  }
-  el.peerList.replaceChildren(
-    ...state.peers.map((p) =>
-      h(
-        'li',
-        { class: `dept-${p.dept}`, title: p.reachable === false ? 'Seen, but not accepting connections (check its firewall)' : null },
-        h('span', { class: 'dept-swatch' }),
-        h('span', { class: 'peer-name' }, p.host || p.address),
-        h('span', null, p.dept ? deptLabel(p.dept) : 'No department'),
-        h('span', { class: 'peer-meta' }, p.address),
-      ),
-    ),
-  );
+  renderHeader(); // the "N other PCs online" count
+  if (state.screen === 'settings') loadPeerReport();
 }
 
 function renderUpdate() {
@@ -1401,7 +1918,9 @@ el.optAutostart.addEventListener('change', async () => {
 document.addEventListener('keydown', (e) => {
   if (!state.expanded) return;
   if (e.key === 'Escape') {
-    if (!el.searchBox.hidden) closeSearch();
+    if (closeFloating()) {
+      // closed a menu, the notice box or an edit in progress
+    } else if (!el.searchBox.hidden) closeSearch();
     else if (state.reply && state.screen === 'board') clearReply();
     else if (state.screen === 'settings') showScreen(state.section);
     else if (state.settings.department) setExpanded(false);
@@ -1481,6 +2000,10 @@ async function init() {
     departments: s.departments,
     reactionChoices: s.reactions || [],
     gifMaxBytes: s.gifMaxBytes || state.gifMaxBytes,
+    pin: s.pin,
+    editWindowMs: s.editWindowMs || state.editWindowMs,
+    retentionDays: s.retentionDays || state.retentionDays,
+    maxQuick: s.maxQuickMessages || state.maxQuick,
     settings: s.settings,
     unread: s.unread.count,
     hasUrgentUnread: s.unread.urgent,
@@ -1493,6 +2016,9 @@ async function init() {
   el.host.textContent = s.host;
   el.author.value = s.settings.author || '';
   deptButtons(el.onboardingDepts, false);
+  renderQuick();
+  renderQuiet();
+  renderPin();
   renderComposeTargets();
   renderReminderTargets();
   renderHeader();

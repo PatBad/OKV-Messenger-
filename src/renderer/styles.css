@@ -1775,3 +1775,471 @@ button.msg-quote:hover {
   color: var(--muted);
   font-size: 11.5px;
 }
+
+/* ---------- 1.8: quick messages, quiet mode, notice, seen-by, edits, computers, history ---------- */
+
+/* Quick messages above the message box */
+.quick-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 7px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.quick-row::-webkit-scrollbar {
+  display: none;
+}
+
+.quick {
+  flex: none;
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.quick:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.quick.is-urgent {
+  border-color: var(--urgent-border);
+}
+
+.quick.is-urgent::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--urgent);
+  vertical-align: 1px;
+}
+
+.quick.is-urgent:hover {
+  border-color: var(--urgent);
+  background: var(--urgent-soft);
+  color: var(--urgent);
+}
+
+/* Quiet mode */
+.quiet-btn {
+  position: relative;
+  width: auto;
+  min-width: 32px;
+  padding: 0 6px;
+  gap: 3px;
+}
+
+.quiet-btn.is-quiet {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.quiet-left {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.quiet-menu {
+  position: absolute;
+  top: 54px;
+  right: 46px;
+  z-index: 30;
+  width: 240px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+}
+
+.quiet-option {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  font-weight: 600;
+}
+
+.quiet-option:hover {
+  background: var(--surface-2);
+}
+
+.quiet-note {
+  margin: 4px 8px 4px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* Pinned notice */
+.pin-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 10px 0;
+  padding: 8px 4px 8px 10px;
+  border: 1px solid #f2c66d;
+  border-left: 4px solid #e5a11b;
+  border-radius: 8px;
+  background: #fdf3da;
+  color: #3d2b05;
+}
+
+@media (prefers-color-scheme: dark) {
+  .pin-banner {
+    background: #2e2410;
+    border-color: #6b4f12;
+    border-left-color: #e5a11b;
+    color: #f4e3bd;
+  }
+}
+
+.pin-banner > svg {
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  flex: none;
+}
+
+.pin-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.pin-text {
+  display: block;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.pin-meta {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.pin-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 0;
+}
+
+.pin-form input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  outline: none;
+  user-select: text;
+}
+
+.pin-form input:focus {
+  border-color: var(--primary);
+}
+
+/* Seen-by under messages we sent */
+.msg-seen {
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: 11.5px;
+  text-align: right;
+}
+
+.msg-seen.is-all {
+  color: var(--primary);
+}
+
+.msg-edited {
+  color: var(--faint);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* Editing a message in place */
+.msg-edit {
+  margin-top: 5px;
+}
+
+.msg-edit-input {
+  width: 100%;
+  min-height: 54px;
+  max-height: 160px;
+  padding: 8px 10px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--bg);
+  resize: vertical;
+  outline: none;
+  font-size: 13.5px;
+  line-height: 1.4;
+  user-select: text;
+}
+
+.msg-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.msg-edit-hint {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* "More" menu on a message */
+.msg-more {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.msg-more svg {
+  width: 16px;
+  height: 16px;
+}
+
+.msg-more:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.msg.menu-open .msg-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.msg-menu {
+  position: absolute;
+  top: 36px;
+  right: 5px;
+  z-index: 5;
+  min-width: 210px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+}
+
+.msg-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.msg-menu-item svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+
+.msg-menu-item:hover {
+  background: var(--surface-2);
+}
+
+/* Settings: quick messages */
+.settings-note {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.quick-edit {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.quick-edit-row {
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.quick-edit-row > input[type='text'] {
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  outline: none;
+  user-select: text;
+}
+
+.quick-edit-row > input[type='text']:focus {
+  border-color: var(--primary);
+}
+
+.quick-edit-opts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.quick-edit-opts select {
+  max-width: 130px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.quick-urgent {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  cursor: pointer;
+}
+
+.quick-urgent input {
+  margin: 0;
+  accent-color: var(--urgent);
+}
+
+/* Settings: computers on the network */
+.peer-list .peer {
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+}
+
+.peer-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--faint);
+  flex: none;
+}
+
+.peer-dot.is-online {
+  background: #16a34a;
+}
+
+.peer.is-offline .peer-name {
+  color: var(--muted);
+}
+
+.peer-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.peer-main .peer-name,
+.peer-main .peer-sub {
+  display: block;
+}
+
+.peer-sub {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.peer-ver {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.peer-ver.is-current {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.peer-ver.is-old {
+  background: #fdf0d2;
+  color: #92590a;
+}
+
+@media (prefers-color-scheme: dark) {
+  .peer-ver.is-old {
+    background: #3a2c0e;
+    color: #f0c46a;
+  }
+}
+
+/* Settings: history */
+.export-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.export-pick select {
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+/* A message with its menu open must not clip the menu. */
+.msg.menu-open {
+  overflow: visible;
+  z-index: 6;
+}

@@ -79,6 +79,22 @@ class GifStore extends EventEmitter {
     return { hash, size: buf.length, w: info.width, h: info.height };
   }
 
+  /** Moves a GIF out of the live folder into archive/gifs/ (the tidy-up). Returns whether there was a file to move. */
+  archive(hash) {
+    if (!this.has(hash)) return false;
+    const dest = path.join(this.dir, '..', 'archive', 'gifs');
+    fs.mkdirSync(dest, { recursive: true });
+    fs.renameSync(this._file(hash), path.join(dest, `${hash}.gif`));
+    return true;
+  }
+
+  /** Deletes a GIF file for good (used for GIFs in messages that were deleted). */
+  remove(hash) {
+    if (!this.has(hash)) return false;
+    fs.unlinkSync(this._file(hash));
+    return true;
+  }
+
   /** Stores a GIF received from another computer, but only if it's exactly the file that was asked for. */
   addVerified(hash, buf) {
     if (!HASH.test(hash) || !inspectGif(buf) || sha256(buf) !== hash) throw new Error('Received GIF does not match');

@@ -1,18 +1,43 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell, protocol, dialog } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { DEPARTMENTS, DEPARTMENT_IDS, GIF_PLACEHOLDER, REACTIONS, LIMITS } = require('./constants');
+const {
+  DEPARTMENTS,
+  DEPARTMENT_IDS,
+  GIF_PLACEHOLDER,
+  REACTIONS,
+  RETENTION_DAYS,
+  EDIT_WINDOW_MS,
+  DEFAULT_QUICK_MESSAGES,
+  MAX_QUICK_MESSAGES,
+  LIMITS,
+} = require('./constants');
 const { Config } = require('./config');
-const { MessageStore, DeletionLog, ReactionLog, ReminderLog, LocalHides, toWire, isUnread } = require('./store');
+const {
+  MessageStore,
+  DeletionLog,
+  ReactionLog,
+  ReminderLog,
+  EditLog,
+  ReceiptLog,
+  PinLog,
+  LocalHides,
+  receiptId,
+  dayKey,
+  toWire,
+  isUnread,
+} = require('./store');
 const { Network } = require('./network');
 const { Updater } = require('./updater');
 const { createLogger } = require('./logger');
 const { resizeBounds } = require('./geometry');
 const { GifStore, HASH: GIF_HASH } = require('./gifs');
 const { fetchGif, nameFromUrl } = require('./gifurl');
+const { rangeBounds, readArchivedMessages, mergeMessages, toCsv, copyFolder } = require('./exporter');
 
 // Developer overrides so several copies can run side by side on one PC.
 // See README "Running two copies for testing".
@@ -45,6 +70,9 @@ let hides; // "delete for me", this computer only
 let gifs; // GIF files, named by fingerprint
 let reactions; // emoji reactions, shared with the other computers
 let reminders; // reminders and their done/cancelled history, shared
+let edits; // corrections to message text, shared
+let receipts; // which departments have seen which messages, shared
+let pins; // the notice pinned at the top of the board, shared
 let reminderHides; // done reminders cleared from this computer's Done list
 let dueCheckedUntil = Date.now(); // reminders due before this have already chimed
 let network = null;
@@ -91,12 +119,24 @@ async function start() {
   });
   reactions = new ReactionLog(historyDir).load();
   reminders = new ReminderLog(historyDir).load();
+  edits = new EditLog(historyDir).load();
+  receipts = new ReceiptLog(historyDir).load();
+  pins = new PinLog(historyDir).load();
+  // Everything older than the retention period is archived, on every computer alike.
+  for (const history of [store, deletions, reactions, edits, receipts]) history.retentionDays = RETENTION_DAYS;
+  tidyUp();
+  setInterval(tidyUp, 6 * 3600 * 1000);
   reminderHides = new LocalHides(historyDir, 'hidden-reminders.jsonl').load();
   log.info(`loaded ${store.count} messages, ${deletions.count} deletions`);
   store.on('added', onMessagesAdded);
   deletions.on('added', onMessagesChanged);
   reactions.on('added', onMessagesChanged);
   reminders.on('added', onRemindersAdded);
+  edits.on('added', onMessagesChanged);
+  receipts.on('added', (added) => {
+    if (added.some((r) => !r.local)) onMessagesChanged(); // someone else has seen a message
+  });
+  pins.on('added', onPinsAdded);
 
   applyAutoStart();
   createWindow();
@@ -113,6 +153,10 @@ async function start() {
     deletions,
     reactions,
     reminders,
+    edits,
+    receipts,
+    pins,
+    version: app.getVersion(),
     gifs,
     peerId: config.get('peerId'),
     getProfile: () => ({ department: config.get('department'), host: HOST }),
@@ -122,7 +166,10 @@ async function start() {
     tcpPorts: env.OKV_TCP_PORT ? [Number(env.OKV_TCP_PORT)] : undefined,
     staticPeers: [...(config.get('staticPeers') || []), ...(env.OKV_PEERS ? env.OKV_PEERS.split(',') : [])],
   });
-  network.on('peers', (peers) => send('peers', peers));
+  network.on('peers', (peers) => {
+    send('peers', peers);
+    rememberPeers();
+  });
   try {
     await network.start();
   } catch (err) {
@@ -133,6 +180,7 @@ async function start() {
 
   // Chime on the recipient's computers when a reminder falls due.
   setInterval(checkDueReminders, 15000);
+  setInterval(rememberPeers, 60000);
 
   screen.on('display-removed', keepOnScreen);
   screen.on('display-metrics-changed', keepOnScreen);
@@ -392,6 +440,115 @@ function onMessagesAdded(added) {
 }
 
 /** Something other than a new message changed what's on the board (a deletion). */
+// ---------- Edits, seen-receipts, pinned notice, quick messages, tidy-up, computers on the network ----------
+
+/** The wording a message currently has: its latest valid edit, or what was first sent. */
+function textOf(m) {
+  const edit = edits.latest(m);
+  return edit ? edit.text : m.text;
+}
+
+/** Who a message is for, and which of them have seen it. Null when it isn't addressed to anyone else. */
+function seenInfo(m) {
+  const intended = m.to === 'all' ? DEPARTMENT_IDS.filter((d) => d !== m.from) : m.to === m.from ? [] : [m.to];
+  if (!intended.length) return null;
+  return { intended, seen: receipts.seenBy(m.id).filter((s) => intended.includes(s.dept)) };
+}
+
+function pinView() {
+  const pin = pins ? pins.current() : null;
+  return pin ? { id: pin.id, text: pin.text, by: pin.by, name: pin.byName, at: pin.createdAt } : null;
+}
+
+function onPinsAdded(added) {
+  const fresh = added.some((r) => r.type === 'pin' && !r.local && r.by !== config.get('department'));
+  send('pins-changed', { alert: fresh ? 'normal' : null });
+}
+
+function cleanQuickMessages(list) {
+  return list
+    .slice(0, MAX_QUICK_MESSAGES)
+    .map((q) => ({
+      text: typeof (q && q.text) === 'string' ? q.text.trim().slice(0, 200) : '',
+      to: q && (q.to === 'all' || DEPARTMENT_IDS.includes(q.to)) ? q.to : 'all',
+      urgent: Boolean(q && q.urgent === true),
+    }))
+    .filter((q) => q.text);
+}
+
+/**
+ * Archives everything older than the retention period: messages (with their latest edit baked in) and
+ * their GIF files move to the archive folder; messages that were deleted are discarded, GIF files included.
+ * Reactions, receipts, edits and deletions about old messages have no further use and are discarded.
+ */
+function tidyUp() {
+  try {
+    const now = Date.now();
+    const cutoff = store.cutoffDay(now);
+    for (const m of store.sorted) {
+      if (dayKey(m.createdAt) >= cutoff) break;
+      const edit = edits.latest(m);
+      if (edit) Object.assign(m, { text: edit.text, editedAt: edit.createdAt });
+    }
+    const deleted = (m) => deletions.isDeleted(m) || hides.has(m.id);
+    const old = store.archiveOld(now, { drop: deleted });
+
+    const stillUsed = new Set(store.sorted.filter((m) => m.gif).map((m) => m.gif.hash));
+    const archiveGifs = new Set();
+    const discardGifs = new Set();
+    for (const m of old) if (m.gif && !stillUsed.has(m.gif.hash)) (deleted(m) ? discardGifs : archiveGifs).add(m.gif.hash);
+    for (const hash of archiveGifs) gifs.archive(hash);
+    for (const hash of discardGifs) if (!archiveGifs.has(hash)) gifs.remove(hash);
+
+    let other = 0;
+    for (const history of [deletions, reactions, edits, receipts]) other += history.archiveOld(now, { drop: () => true }).length;
+    if (old.length || other) {
+      log.info(`tidy-up: archived ${old.length} message(s) and ${archiveGifs.size} GIF(s) older than ${RETENTION_DAYS} days, cleared ${other} old record(s)`);
+      onMessagesChanged();
+    }
+  } catch (err) {
+    log.error('tidy-up failed:', err.message);
+  }
+}
+
+/** Remembers each computer seen on the network, so ones that have dropped off still show (with when they were last seen). */
+function rememberPeers() {
+  if (!network || !config) return;
+  const history = { ...(config.get('peerHistory') || {}) };
+  const now = Date.now();
+  let changed = false;
+  for (const p of network.peers()) {
+    const prev = history[p.id];
+    const next = { host: p.host, dept: p.dept, ver: p.ver, address: p.address, lastSeen: p.lastSeen };
+    const different = !prev || ['host', 'dept', 'ver', 'address'].some((k) => prev[k] !== next[k]) || next.lastSeen - prev.lastSeen > 45000;
+    if (different) {
+      history[p.id] = next;
+      changed = true;
+    }
+  }
+  for (const [id, entry] of Object.entries(history)) {
+    if (now - entry.lastSeen > 30 * 86400000) {
+      delete history[id];
+      changed = true;
+    }
+  }
+  if (changed) config.set({ peerHistory: history });
+}
+
+function peersReport() {
+  rememberPeers();
+  const online = network ? network.peers() : [];
+  const onlineIds = new Set(online.map((p) => p.id));
+  const history = config.get('peerHistory') || {};
+  const peers = [
+    ...online.map((p) => ({ id: p.id, host: p.host, dept: p.dept, ver: p.ver, address: p.address, online: true, lastSeen: p.lastSeen, reachable: p.reachable })),
+    ...Object.entries(history)
+      .filter(([id]) => !onlineIds.has(id))
+      .map(([id, h]) => ({ id, host: h.host, dept: h.dept, ver: h.ver, address: h.address, online: false, lastSeen: h.lastSeen, reachable: null })),
+  ].sort((a, b) => Number(b.online) - Number(a.online) || (a.host || '').localeCompare(b.host || ''));
+  return { self: { host: HOST, dept: config.get('department'), version: app.getVersion() }, peers };
+}
+
 // ---------- Reminders ----------
 
 /** A reminder as the page sees it, with its current state worked out. */
@@ -530,6 +687,7 @@ function queryFilters(opts) {
     search: typeof opts.search === 'string' ? opts.search.slice(0, 200) : '',
     department: config.get('department'),
     exclude: isRemoved,
+    textOf, // search finds the edited wording
   };
 }
 
@@ -539,6 +697,8 @@ function publicSettings() {
     author: config.get('author'),
     sound: config.get('sound'),
     autoStart: config.get('autoStart'),
+    quietUntil: config.get('quietUntil'),
+    quickMessages: config.get('quickMessages') ?? DEFAULT_QUICK_MESSAGES,
   };
 }
 
@@ -556,6 +716,10 @@ ipcMain.handle('get-state', () => ({
   reactions: REACTIONS,
   gifPlaceholder: GIF_PLACEHOLDER,
   gifMaxBytes: LIMITS.GIF_BYTES,
+  editWindowMs: EDIT_WINDOW_MS,
+  retentionDays: RETENTION_DAYS,
+  maxQuickMessages: MAX_QUICK_MESSAGES,
+  pin: pinView(),
   settings: publicSettings(),
   expanded,
   unread: unread(),
@@ -573,11 +737,21 @@ ipcMain.handle('query', (_e, opts = {}) => {
   const limit = Number.isInteger(opts.limit) ? clamp(opts.limit, 1, 1000) : 150;
   const result = store.query({ ...queryFilters(opts), before, limit });
   // Copies, so the stored messages don't get a reactions field.
-  result.messages = result.messages.map((m) => ({
-    ...m,
-    reactions: reactions.forMessage(m.id, REACTIONS),
-    reply: m.replyTo ? store.quote(m.replyTo, isRemoved) : null,
-  }));
+  const me = config.get('department');
+  result.messages = result.messages.map((m) => {
+    const edit = edits.latest(m);
+    return {
+      ...m,
+      text: edit ? edit.text : m.text,
+      editedAt: edit ? edit.createdAt : null,
+      reactions: reactions.forMessage(m.id, REACTIONS),
+      reply: m.replyTo ? store.quote(m.replyTo, isRemoved, textOf) : null,
+      // For messages we sent: which of the people they're for have seen it.
+      seen: m.from === me ? seenInfo(m) : null,
+      // For messages sent to us: whether this department has already said it's seen it.
+      seenByMe: m.from === me || !(m.to === 'all' || m.to === me) || receipts.hasSeen(m.id, me),
+    };
+  });
   return result;
 });
 
@@ -627,6 +801,8 @@ ipcMain.handle('set-settings', (_e, values = {}) => {
   if (typeof values.sound === 'boolean') next.sound = values.sound;
   if (typeof values.autoStart === 'boolean') next.autoStart = values.autoStart;
   if (typeof values.author === 'string') next.author = values.author.trim().slice(0, LIMITS.AUTHOR);
+  if (Array.isArray(values.quickMessages)) next.quickMessages = cleanQuickMessages(values.quickMessages);
+  if (values.resetQuickMessages === true) next.quickMessages = null; // back to the standard buttons
   config.set(next);
   if ('autoStart' in next) applyAutoStart();
   return publicSettings();
@@ -775,6 +951,120 @@ ipcMain.on('resize-end', () => {
 });
 
 ipcMain.on('click-through', (_e, on) => setClickThrough(!!on));
+
+// Correct a message's wording. Only its sender's department may, and only shortly after sending.
+ipcMain.handle('edit-message', (_e, { id, text } = {}) => {
+  const department = config.get('department');
+  const message = typeof id === 'string' ? store.byId.get(id) : null;
+  if (!message) throw new Error('Message not found');
+  if (message.from !== department) throw new Error('Only the department that sent it can edit it');
+  if (Date.now() - message.createdAt > EDIT_WINDOW_MS) throw new Error('It’s too late to edit that message');
+  const [record] = edits.add(
+    [{ id: crypto.randomUUID(), target: id, text, by: department, host: HOST, createdAt: Date.now() }],
+    { local: true },
+  );
+  if (!record) throw new Error('The message can’t be empty');
+  if (network) network.pushNow([toWire(record)], 'edits');
+  return true;
+});
+
+// The page reports messages that have been on screen; this department's "seen" is recorded once for each.
+ipcMain.handle('mark-seen', (_e, ids) => {
+  const department = config.get('department');
+  if (!department || !Array.isArray(ids)) return 0;
+  const now = Date.now();
+  const records = [];
+  for (const id of ids.slice(0, 200)) {
+    const m = typeof id === 'string' ? store.byId.get(id) : null;
+    if (!m || m.from === department || !(m.to === 'all' || m.to === department) || receipts.hasSeen(id, department)) continue;
+    records.push({ id: receiptId(id, department), target: id, by: department, host: HOST, createdAt: now });
+  }
+  const added = receipts.add(records, { local: true });
+  if (added.length && network) network.pushNow(added.map(toWire), 'receipts');
+  return added.length;
+});
+
+ipcMain.handle('pin-get', () => pinView());
+
+ipcMain.handle('pin-set', (_e, text) => {
+  const department = config.get('department');
+  if (!department) throw new Error('Choose a department first');
+  const [record] = pins.add(
+    [{ type: 'pin', id: crypto.randomUUID(), text, by: department, byName: config.get('author') || '', host: HOST, createdAt: Date.now() }],
+    { local: true },
+  );
+  if (!record) throw new Error('The notice was empty or too long');
+  if (network) network.pushNow([toWire(record)], 'pins');
+  return pinView();
+});
+
+ipcMain.handle('pin-clear', () => {
+  const current = pins.current();
+  const department = config.get('department');
+  if (!current || !department) return null;
+  const [record] = pins.add(
+    [{ type: 'clear', id: crypto.randomUUID(), target: current.id, by: department, byName: config.get('author') || '', host: HOST, createdAt: Date.now() }],
+    { local: true },
+  );
+  if (record && network) network.pushNow([toWire(record)], 'pins');
+  return pinView();
+});
+
+// Mutes sounds on this computer for a while (urgent messages still sound). 0 turns them back on.
+ipcMain.handle('set-quiet', (_e, minutes) => {
+  const m = Number(minutes);
+  config.set({ quietUntil: Number.isFinite(m) && m > 0 ? Date.now() + Math.min(m, 24 * 60) * 60000 : null });
+  return publicSettings();
+});
+
+ipcMain.handle('peers-report', () => peersReport());
+
+// Saves messages as a spreadsheet (CSV): live and archived ones in the chosen period.
+ipcMain.handle('export-messages', async (_e, { range } = {}) => {
+  const { from, to, label } = rangeBounds(range);
+  const historyDir = path.join(app.getPath('userData'), 'history');
+  const rows = mergeMessages(store.sorted.filter((m) => !isRemoved(m)), readArchivedMessages(historyDir))
+    .filter((m) => m.createdAt >= from && m.createdAt < to)
+    .map((m) => ({ ...m, text: textOf(m) }));
+  const stamp = new Date().toISOString().slice(0, 10);
+  // OKV_TEST_PICK (development only) skips the file dialogs so automated checks can save into a folder.
+  const chosen = env.OKV_TEST_PICK ? { filePath: path.join(env.OKV_TEST_PICK, 'export.csv') } : await dialog.showSaveDialog(win, {
+    title: 'Save messages',
+    defaultPath: path.join(app.getPath('documents'), `OKV-messages-${label}-${stamp}.csv`),
+    filters: [{ name: 'Spreadsheet (CSV)', extensions: ['csv'] }],
+  });
+  if (chosen.canceled || !chosen.filePath) return { canceled: true };
+  const csv = toCsv(rows, {
+    label: (id) => (DEPARTMENTS.find((d) => d.id === id) || { label: id }).label,
+    edited: (m) => Boolean(m.editedAt) || Boolean(edits.latest(m)),
+  });
+  fs.writeFileSync(chosen.filePath, '\uFEFF' + csv, 'utf8'); // the mark makes Excel read accents and emoji correctly
+  log.info(`exported ${rows.length} message(s) to ${chosen.filePath}`);
+  return { path: chosen.filePath, count: rows.length };
+});
+
+// Copies the whole history (messages, GIFs, archive) and settings into a dated folder somewhere the user picks.
+ipcMain.handle('backup-history', async () => {
+  const picked = env.OKV_TEST_PICK
+    ? { filePaths: [env.OKV_TEST_PICK] }
+    : await dialog.showOpenDialog(win, { title: 'Choose where to save the backup', properties: ['openDirectory', 'createDirectory'] });
+  if (picked.canceled || !picked.filePaths[0]) return { canceled: true };
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  const dest = path.join(picked.filePaths[0], `OKV-Messenger-backup-${stamp}`);
+  fs.mkdirSync(dest, { recursive: true });
+  const result = copyFolder(path.join(app.getPath('userData'), 'history'), path.join(dest, 'history'));
+  fs.copyFileSync(config.file, path.join(dest, 'config.json'));
+  log.info(`backed up ${result.files} file(s) to ${dest}`);
+  return { path: dest, ...result };
+});
+
+ipcMain.handle('open-archive-folder', () => {
+  const dir = path.join(app.getPath('userData'), 'history', 'archive');
+  fs.mkdirSync(dir, { recursive: true });
+  return shell.openPath(dir);
+});
 
 // A GIF pasted as a web link (e.g. from the Windows emoji panel's GIF tab): fetched here, then attached like a chosen file.
 ipcMain.handle('fetch-gif-url', async (_e, url) => {
