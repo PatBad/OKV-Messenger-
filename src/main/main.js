@@ -9,6 +9,8 @@ const {
   DEPARTMENTS,
   DEPARTMENT_IDS,
   GIF_PLACEHOLDER,
+  ATTACH_PLACEHOLDER,
+  ATTACHMENT_RETENTION_DAYS,
   REACTIONS,
   RETENTION_DAYS,
   EDIT_WINDOW_MS,
@@ -36,6 +38,8 @@ const { Updater } = require('./updater');
 const { createLogger } = require('./logger');
 const { resizeBounds } = require('./geometry');
 const { GifStore, HASH: GIF_HASH } = require('./gifs');
+const { FileStore, inspectFile, imageMime, cleanFileName, isBlockedName, checkBytes, BLOCKED_EXTENSIONS } = require('./files');
+const { listMedia } = require('./media');
 const { fetchGif, nameFromUrl } = require('./gifurl');
 const { rangeBounds, readArchivedMessages, mergeMessages, toCsv, copyFolder } = require('./exporter');
 
@@ -59,7 +63,11 @@ const ASSETS = path.join(__dirname, '..', '..', 'assets');
 const HOST = os.hostname().slice(0, LIMITS.HOST);
 
 // GIFs are shown to the page as okv-gif://<fingerprint>, served from this computer's GIF folder.
-protocol.registerSchemesAsPrivileged([{ scheme: 'okv-gif', privileges: { standard: true, secure: true } }]);
+// Attached images are shown the same way, as okv-file://<fingerprint>.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'okv-gif', privileges: { standard: true, secure: true } },
+  { scheme: 'okv-file', privileges: { standard: true, secure: true } },
+]);
 
 let win = null;
 let tray = null;
@@ -68,6 +76,7 @@ let store;
 let deletions; // "delete for everyone", shared with the other computers
 let hides; // "delete for me", this computer only
 let gifs; // GIF files, named by fingerprint
+let files; // attached files and images, named by fingerprint
 let reactions; // emoji reactions, shared with the other computers
 let reminders; // reminders and their done/cancelled history, shared
 let edits; // corrections to message text, shared
@@ -117,6 +126,22 @@ async function start() {
     if (!file) return new Response('GIF not here yet', { status: 404, headers: { 'cache-control': 'no-store' } });
     return new Response(file, { headers: { 'content-type': 'image/gif', 'cache-control': 'max-age=31536000, immutable' } });
   });
+  files = new FileStore(historyDir);
+  files.on('added', (hash) => send('file-ready', hash));
+  // Only pictures we recognise by their content are ever handed to the page; anything else is a 404.
+  protocol.handle('okv-file', (request) => {
+    const hash = new URL(request.url).hostname;
+    const file = GIF_HASH.test(hash) ? files.read(hash) : null;
+    const mime = file ? imageMime(file) : null;
+    if (!mime) return new Response('Not here', { status: 404, headers: { 'cache-control': 'no-store' } });
+    return new Response(file, { headers: { 'content-type': mime, 'cache-control': 'max-age=31536000, immutable', 'x-content-type-options': 'nosniff' } });
+  });
+  // Files opened last time were copied out under their real names; they're not needed any more.
+  try {
+    fs.rmSync(path.join(dataDir, 'opened'), { recursive: true, force: true });
+  } catch {
+    // one may still be open in another program
+  }
   reactions = new ReactionLog(historyDir).load();
   reminders = new ReminderLog(historyDir).load();
   edits = new EditLog(historyDir).load();
@@ -158,6 +183,9 @@ async function start() {
     pins,
     version: app.getVersion(),
     gifs,
+    files,
+    fileRetentionDays: ATTACHMENT_RETENTION_DAYS,
+    shouldFetch: (m) => !deletions.isDeleted(m),
     peerId: config.get('peerId'),
     getProfile: () => ({ department: config.get('department'), host: HOST }),
     log,
@@ -481,6 +509,11 @@ function cleanQuickMessages(list) {
  * their GIF files move to the archive folder; messages that were deleted are discarded, GIF files included.
  * Reactions, receipts, edits and deletions about old messages have no further use and are discarded.
  */
+/** Whether a message's attached files have passed the retention period (so they've been, or will be, archived). */
+function attachmentsExpired(m) {
+  return dayKey(m.createdAt) < dayKey(Date.now() - ATTACHMENT_RETENTION_DAYS * 86400000);
+}
+
 function tidyUp() {
   try {
     const now = Date.now();
@@ -491,6 +524,25 @@ function tidyUp() {
       if (edit) Object.assign(m, { text: edit.text, editedAt: edit.createdAt });
     }
     const deleted = (m) => deletions.isDeleted(m) || hides.has(m.id);
+
+    // Attached files: archive those on messages older than the attachment retention (a week), and remove
+    // those on messages deleted for everyone, unless a message that stays uses the same file.
+    const fileCutoff = dayKey(now - ATTACHMENT_RETENTION_DAYS * 86400000);
+    const keepFiles = new Set();
+    for (const m of store.sorted) {
+      if (m.attachments && dayKey(m.createdAt) >= fileCutoff && !deletions.isDeleted(m)) for (const a of m.attachments) keepFiles.add(a.hash);
+    }
+    let filesTidied = 0;
+    for (const m of store.sorted) {
+      if (!m.attachments) continue;
+      const removed = deletions.isDeleted(m);
+      if (!removed && dayKey(m.createdAt) >= fileCutoff) continue;
+      for (const a of m.attachments) {
+        if (keepFiles.has(a.hash)) continue;
+        if (removed ? files.remove(a.hash) : files.archive(a.hash)) filesTidied++;
+      }
+    }
+
     const old = store.archiveOld(now, { drop: deleted });
 
     const stillUsed = new Set(store.sorted.filter((m) => m.gif).map((m) => m.gif.hash));
@@ -502,8 +554,8 @@ function tidyUp() {
 
     let other = 0;
     for (const history of [deletions, reactions, edits, receipts]) other += history.archiveOld(now, { drop: () => true }).length;
-    if (old.length || other) {
-      log.info(`tidy-up: archived ${old.length} message(s) and ${archiveGifs.size} GIF(s) older than ${RETENTION_DAYS} days, cleared ${other} old record(s)`);
+    if (old.length || other || filesTidied) {
+      log.info(`tidy-up: archived ${old.length} message(s) and ${archiveGifs.size} GIF(s) older than ${RETENTION_DAYS} days, ${filesTidied} attached file(s) older than ${ATTACHMENT_RETENTION_DAYS} days, cleared ${other} old record(s)`);
       onMessagesChanged();
     }
   } catch (err) {
@@ -715,6 +767,12 @@ ipcMain.handle('get-state', () => ({
   departments: DEPARTMENTS,
   reactions: REACTIONS,
   gifPlaceholder: GIF_PLACEHOLDER,
+  attachPlaceholder: ATTACH_PLACEHOLDER,
+  fileMaxBytes: LIMITS.FILE_BYTES,
+  maxAttachments: LIMITS.MAX_ATTACHMENTS,
+  attachTotalBytes: LIMITS.ATTACH_TOTAL_BYTES,
+  attachmentRetentionDays: ATTACHMENT_RETENTION_DAYS,
+  blockedExtensions: [...BLOCKED_EXTENSIONS],
   gifMaxBytes: LIMITS.GIF_BYTES,
   editWindowMs: EDIT_WINDOW_MS,
   retentionDays: RETENTION_DAYS,
@@ -746,6 +804,7 @@ ipcMain.handle('query', (_e, opts = {}) => {
       editedAt: edit ? edit.createdAt : null,
       reactions: reactions.forMessage(m.id, REACTIONS),
       reply: m.replyTo ? store.quote(m.replyTo, isRemoved, textOf) : null,
+      attachments: m.attachments ? m.attachments.map((a) => ({ ...a, have: files.has(a.hash), expired: attachmentsExpired(m) })) : undefined,
       // For messages we sent: which of the people they're for have seen it.
       seen: m.from === me ? seenInfo(m) : null,
       // For messages sent to us: whether this department has already said it's seen it.
@@ -762,6 +821,18 @@ ipcMain.handle('send-message', (_e, input = {}) => {
   // An attached GIF is checked and stored here; the message carries only its fingerprint.
   let gif = null;
   if (input.gif && input.gif.data) gif = gifs.add(Buffer.from(input.gif.data));
+  // Attached files and images: every one is checked before any is stored.
+  let attachments;
+  if (Array.isArray(input.files) && input.files.length) {
+    if (input.files.length > LIMITS.MAX_ATTACHMENTS) throw new Error(`You can attach up to ${LIMITS.MAX_ATTACHMENTS} files to one message`);
+    const picked = input.files.map((f) => ({ name: f && f.name, data: Buffer.from((f && f.data) || []) }));
+    const total = picked.reduce((n, f) => n + f.data.length, 0);
+    if (total > LIMITS.ATTACH_TOTAL_BYTES) {
+      throw new Error(`Those files are too large together (the limit is ${LIMITS.ATTACH_TOTAL_BYTES / 1024 / 1024} MB for one message)`);
+    }
+    for (const f of picked) inspectFile(f.data, f.name);
+    attachments = picked.map((f) => files.add(f.data, f.name));
+  }
   const text = typeof input.text === 'string' ? input.text.trim() : '';
   const [message] = store.add(
     [
@@ -771,8 +842,9 @@ ipcMain.handle('send-message', (_e, input = {}) => {
         to: input.to,
         author,
         host: HOST,
-        text: gif && !text ? GIF_PLACEHOLDER : input.text,
+        text: !text && (gif || attachments) ? (gif ? GIF_PLACEHOLDER : ATTACH_PLACEHOLDER) : input.text,
         gif,
+        attachments,
         replyTo: typeof input.replyTo === 'string' && store.has(input.replyTo) ? input.replyTo : undefined,
         urgent: input.urgent === true,
         createdAt: Date.now(),
@@ -1059,6 +1131,48 @@ ipcMain.handle('backup-history', async () => {
   log.info(`backed up ${result.files} file(s) to ${dest}`);
   return { path: dest, ...result };
 });
+
+// Opens an attached file in whatever program Windows uses for that kind of file. Files are stored by fingerprint,
+// so it's copied out under its real name first, and the same safety checks are made again.
+ipcMain.handle('open-file', async (_e, { hash, name } = {}) => {
+  const source = typeof hash === 'string' ? files.pathOf(hash) : null;
+  if (!source) throw new Error('That file isn’t on this computer yet');
+  const safeName = cleanFileName(name);
+  if (isBlockedName(safeName) || !checkBytes(files.read(hash))) throw new Error('That kind of file can’t be opened from here');
+  const dir = path.join(app.getPath('userData'), 'opened', hash.slice(0, 16));
+  fs.mkdirSync(dir, { recursive: true });
+  const target = path.join(dir, safeName);
+  if (!fs.existsSync(target)) fs.copyFileSync(source, target);
+  if (env.OKV_TEST_PICK) return { copiedTo: target }; // development only: don't launch programs during automated checks
+  const problem = await shell.openPath(target);
+  if (problem) throw new Error(`Windows couldn’t open that file: ${problem}`);
+  return true;
+});
+
+ipcMain.handle('save-file', async (_e, { hash, name } = {}) => {
+  const source = typeof hash === 'string' ? files.pathOf(hash) : null;
+  if (!source) throw new Error('That file isn’t on this computer yet');
+  const safeName = cleanFileName(name);
+  // OKV_TEST_PICK (development only) skips the file dialog so automated checks can save into a folder.
+  const chosen = env.OKV_TEST_PICK
+    ? { filePath: path.join(env.OKV_TEST_PICK, safeName) }
+    : await dialog.showSaveDialog(win, { title: 'Save a copy', defaultPath: path.join(app.getPath('downloads'), safeName) });
+  if (chosen.canceled || !chosen.filePath) return { canceled: true };
+  fs.copyFileSync(source, chosen.filePath);
+  return { path: chosen.filePath };
+});
+
+// The Media tab: images, files and GIFs from messages still on the board.
+ipcMain.handle('media-list', (_e, opts = {}) =>
+  listMedia(store.sorted, {
+    isRemoved,
+    hasFile: (hash) => files.has(hash),
+    hasGif: (hash) => gifs.has(hash),
+    retentionDays: ATTACHMENT_RETENTION_DAYS,
+    filter: ['all', 'images', 'files'].includes(opts.filter) ? opts.filter : 'all',
+    search: typeof opts.search === 'string' ? opts.search.slice(0, 100) : '',
+  }),
+);
 
 ipcMain.handle('open-archive-folder', () => {
   const dir = path.join(app.getPath('userData'), 'history', 'archive');

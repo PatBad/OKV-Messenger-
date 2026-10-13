@@ -4,7 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
-const { DEPARTMENT_IDS, TO_ALL, GIF_PLACEHOLDER, EDIT_WINDOW_MS, LIMITS } = require('./constants');
+const { DEPARTMENT_IDS, TO_ALL, GIF_PLACEHOLDER, ATTACH_PLACEHOLDER, EDIT_WINDOW_MS, LIMITS } = require('./constants');
+const { cleanFileName, isBlockedName } = require('./files');
 
 const ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
 
@@ -24,6 +25,28 @@ function sanitizeGif(g) {
   if (!Number.isInteger(size) || size < 1 || size > LIMITS.GIF_BYTES) return null;
   if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w > 65535 || h > 65535) return null;
   return { hash, size, w, h };
+}
+
+/**
+ * A file or image attached to a message: { hash, size, name, kind, w?, h? }, where hash is the SHA-256 of the
+ * file and kind is 'image' (shown inline) or 'file'. A name that ends in a blocked extension (a program,
+ * script, web page ...) is refused here, so a computer can't push one onto the others. Returns a clean copy or null.
+ */
+function sanitizeAttachment(a) {
+  if (!a || typeof a !== 'object') return null;
+  const { hash, size, kind, w, h } = a;
+  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) return null;
+  if (!Number.isInteger(size) || size < 1 || size > LIMITS.FILE_BYTES) return null;
+  if (kind !== 'image' && kind !== 'file') return null;
+  if (typeof a.name !== 'string') return null;
+  const name = cleanFileName(a.name);
+  if (isBlockedName(name)) return null;
+  const clean = { hash, size, name, kind };
+  if (Number.isInteger(w) && Number.isInteger(h) && w >= 1 && h >= 1 && w <= 65535 && h <= 65535) {
+    clean.w = w;
+    clean.h = h;
+  }
+  return clean;
 }
 
 /**
@@ -62,6 +85,11 @@ function sanitizeMessage(m) {
   };
   const gif = sanitizeGif(m.gif);
   if (gif) message.gif = gif;
+  if (Array.isArray(m.attachments)) {
+    // Look at a bounded number of entries (so a huge list costs nothing), keep the valid ones, then the first few.
+    const list = m.attachments.slice(0, 4 * LIMITS.MAX_ATTACHMENTS).map(sanitizeAttachment).filter(Boolean).slice(0, LIMITS.MAX_ATTACHMENTS);
+    if (list.length) message.attachments = list;
+  }
   // A reply carries only the id of the message it answers; each computer works out the quote itself.
   if (validId(m.replyTo)) message.replyTo = m.replyTo;
   return message;
@@ -479,7 +507,8 @@ class MessageStore extends RecordLog {
     if (!original) return { state: 'missing' };
     if (exclude && exclude(original)) return { state: 'removed' };
     const isGifOnly = Boolean(original.gif) && original.text === GIF_PLACEHOLDER;
-    const flat = isGifOnly ? '' : (textOf ? textOf(original) : original.text).replace(/\s+/g, ' ').trim();
+    const isFilesOnly = Boolean(original.attachments) && original.text === ATTACH_PLACEHOLDER;
+    const flat = isGifOnly || isFilesOnly ? '' : (textOf ? textOf(original) : original.text).replace(/\s+/g, ' ').trim();
     return {
       state: 'ok',
       id: original.id,
@@ -487,6 +516,7 @@ class MessageStore extends RecordLog {
       author: original.author,
       text: flat.length > 160 ? `${flat.slice(0, 160).trimEnd()}…` : flat,
       gif: Boolean(original.gif),
+      files: original.attachments ? original.attachments.length : 0,
     };
   }
 
@@ -804,6 +834,7 @@ module.exports = {
   LocalHides,
   sanitizeMessage,
   sanitizeGif,
+  sanitizeAttachment,
   sanitizeDeletion,
   sanitizeReaction,
   sanitizeReminderRecord,

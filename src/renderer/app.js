@@ -44,6 +44,22 @@ const el = {
   replySnippet: $('reply-snippet'),
   replyCancel: $('reply-cancel'),
   quickRow: $('quick-row'),
+  attachBtn: $('attach-btn'),
+  attachInput: $('attach-input'),
+  attachList: $('attach-list'),
+  media: $('screen-media'),
+  mediaFilters: $('media-filters'),
+  mediaSearch: $('media-search'),
+  mediaList: $('media-list'),
+  mediaNote: $('media-note'),
+  viewer: $('viewer'),
+  viewerTitle: $('viewer-title'),
+  viewerImg: $('viewer-img'),
+  viewerShow: $('viewer-show'),
+  viewerSave: $('viewer-save'),
+  viewerOpen: $('viewer-open'),
+  viewerClose: $('viewer-close'),
+  viewerStage: $('viewer-stage'),
   quietBtn: $('quiet-btn'),
   quietLeft: $('quiet-left'),
   quietMenu: $('quiet-menu'),
@@ -118,6 +134,17 @@ const state = {
   sending: false,
   gif: null, // the GIF waiting to be sent: { data, name, size, url }
   reply: null, // the message being replied to: { id, from, author, text, gif }
+  pendingFiles: [], // files and images waiting to be sent: { name, size, data, url, isImage }
+  attachPlaceholder: '[Attachment]',
+  fileMaxBytes: 15 * 1024 * 1024,
+  maxAttach: 5,
+  attachTotal: 40 * 1024 * 1024,
+  attachRetention: 7,
+  blockedExt: new Set(),
+  mediaFilter: 'all',
+  mediaSearch: '',
+  media: null,
+  viewing: null, // the picture open in the viewer
   pin: null, // the notice pinned for everyone: { text, by, name, at }
   editing: null, // id of the message being edited, with its unsaved wording in editDraft
   editDraft: null,
@@ -416,15 +443,17 @@ function renderHeader() {
 
 function showScreen(name) {
   state.screen = name;
-  const section = name === 'board' || name === 'reminders';
+  const section = name === 'board' || name === 'reminders' || name === 'media';
   if (section) state.section = name;
   el.onboarding.hidden = name !== 'onboarding';
   el.board.hidden = name !== 'board';
   el.reminders.hidden = name !== 'reminders';
+  el.media.hidden = name !== 'media';
   el.settings.hidden = name !== 'settings';
   el.sections.hidden = !section;
   for (const b of el.sections.querySelectorAll('button')) b.setAttribute('aria-selected', String(b.dataset.section === name));
   if (name === 'settings') renderSettings();
+  if (name === 'media') refreshMedia();
   if (name === 'board') {
     renderList({ toBottom: true });
     el.text.focus();
@@ -526,8 +555,9 @@ function messageNode(m) {
     ),
     quoteNode(m),
     // A GIF message has "[GIF]" as its text unless the sender typed a caption.
-    state.editing === m.id ? editorNode(m) : m.gif && m.text === GIF_PLACEHOLDER ? null : h('p', { class: 'msg-text' }, m.text),
+    state.editing === m.id ? editorNode(m) : isMediaOnly(m) ? null : h('p', { class: 'msg-text' }, m.text),
     gifNode(m),
+    attachmentsNode(m),
     reactionsNode(m),
     seenNode(m),
     // Shown while pointing at the message: react, or delete.
@@ -916,7 +946,7 @@ function autoGrow() {
 }
 
 function updateSendState() {
-  el.send.disabled = state.sending || (!el.text.value.trim() && !state.gif);
+  el.send.disabled = state.sending || (!el.text.value.trim() && !state.gif && !state.pendingFiles.length);
 }
 
 // ---------- Seen-by, edits, quick messages, quiet mode, pinned notice ----------
@@ -1002,7 +1032,7 @@ function seenNode(m) {
 const canEdit = (m) => m.from === state.settings.department && Date.now() - m.createdAt <= state.editWindowMs;
 
 function editorNode(m) {
-  if (state.editDraft === null) state.editDraft = m.gif && m.text === GIF_PLACEHOLDER ? '' : m.text;
+  if (state.editDraft === null) state.editDraft = isMediaOnly(m) ? '' : m.text;
   const save = h('button', { type: 'button', class: 'chip is-done', onclick: () => saveEdit(m) }, 'Save');
   const box = h('textarea', { class: 'msg-edit-input', rows: '2', maxlength: '4000', 'aria-label': 'Edit message' });
   box.value = state.editDraft;
@@ -1100,6 +1130,10 @@ document.addEventListener('pointerdown', (e) => {
 /** Closes whatever is floating (menus, the notice box, an edit). Returns whether there was anything to close. */
 function closeFloating() {
   let closed = false;
+  if (state.viewing) {
+    closeViewer();
+    closed = true;
+  }
   if (el.list.querySelector('.msg-menu')) {
     closeMessageMenus();
     closed = true;
@@ -1275,8 +1309,8 @@ async function setNotice(text, undoTo) {
 }
 
 function pinFromMessage(m) {
-  if (m.gif && m.text === GIF_PLACEHOLDER) {
-    toast('That message is only a GIF, so there’s no text to pin');
+  if (isMediaOnly(m)) {
+    toast('That message has no text to pin');
     return;
   }
   const text = m.text.length > 300 ? `${m.text.slice(0, 299).trimEnd()}…` : m.text;
@@ -1421,20 +1455,20 @@ function quoteNode(m) {
     'button',
     { type: 'button', class: ['msg-quote', `dept-${q.from}`], title: 'Go to the original message', onclick: () => jumpToMessage(q.id) },
     h('span', { class: 'msg-quote-who' }, q.author ? `${deptLabel(q.from)} · ${q.author}` : deptLabel(q.from)),
-    h('span', { class: 'msg-quote-text' }, q.text || (q.gif ? 'GIF' : '')),
+    h('span', { class: 'msg-quote-text' }, q.text || (q.gif ? 'GIF' : q.files ? (q.files === 1 ? 'Attachment' : `${q.files} attachments`) : '')),
   );
 }
 
 /** Starts a reply to a message: shows the strip above the message box and addresses the reply sensibly. */
 function setReply(m) {
   const me = state.settings.department;
-  const isGifOnly = Boolean(m.gif) && m.text === GIF_PLACEHOLDER;
+  const isGifOnly = isMediaOnly(m);
   state.reply = { id: m.id, from: m.from, author: m.author, text: isGifOnly ? '' : m.text.replace(/\s+/g, ' ').trim(), gif: Boolean(m.gif) };
   // Reply to whoever sent it; if it was our own message, carry on to whoever we sent it to.
   el.to.value = m.from !== me ? m.from : m.to;
   updatePlaceholder();
   el.replyWho.textContent = `Replying to ${m.from === me ? 'yourself' : deptLabel(m.from)}${m.author ? ` · ${m.author}` : ''}`;
-  el.replySnippet.textContent = state.reply.text || (m.gif ? 'GIF' : '');
+  el.replySnippet.textContent = state.reply.text || (m.gif ? 'GIF' : m.attachments ? 'Attachment' : '');
   el.replyBar.hidden = false;
   el.text.placeholder = 'Write your reply…';
   el.text.focus();
@@ -1467,6 +1501,279 @@ async function jumpToMessage(id) {
   node.classList.add('is-flash');
   setTimeout(() => node.classList.remove('is-flash'), 1800);
 }
+
+// ---------- Files and images ----------
+
+const isMediaOnly = (m) => Boolean((m.gif && m.text === GIF_PLACEHOLDER) || (m.attachments && m.text === state.attachPlaceholder));
+
+const fileExt = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
+
+/** A short label for a file's icon, from its extension. */
+function fileLabel(name) {
+  const ext = fileExt(name);
+  const groups = { PDF: ['pdf'], DOC: ['doc', 'docx', 'rtf', 'odt'], XLS: ['xls', 'xlsx', 'csv', 'ods'], PPT: ['ppt', 'pptx', 'odp'], ZIP: ['zip', '7z', 'rar', 'tar', 'gz'], TXT: ['txt', 'log', 'md'] };
+  for (const [label, list] of Object.entries(groups)) if (list.includes(ext)) return label;
+  return ext ? ext.slice(0, 4).toUpperCase() : 'FILE';
+}
+
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif'];
+
+/** Adds the chosen, pasted or dropped files to the message being written. Small GIFs keep animating through the GIF route. */
+async function addFiles(fileList) {
+  for (const file of [...fileList]) {
+    const isGif = /gif$/i.test(file.type) || /\.gif$/i.test(file.name);
+    if (isGif && !state.gif && file.size <= state.gifMaxBytes) await attachGif(file);
+    else await addAttachment(file);
+  }
+}
+
+async function addAttachment(file) {
+  el.composeError.hidden = true;
+  let name = String(file.name || '').split(/[\\/]/).pop().trim();
+  if (!name || /^image\.(png|jpe?g|webp|bmp)$/i.test(name)) {
+    // A screenshot or copied picture arrives with no useful name.
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+    name = `Screenshot ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}.${ext}`;
+  }
+  if (state.pendingFiles.length >= state.maxAttach) return showGifError(`You can attach up to ${state.maxAttach} files to one message.`);
+  if (state.blockedExt.has(fileExt(name))) return showGifError(`“${name}” can’t be sent: programs, scripts, web pages and macro files aren’t allowed.`);
+  if (file.size === 0) return showGifError(`“${name}” is empty.`);
+  if (file.size > state.fileMaxBytes) return showGifError(`“${name}” is ${formatSize(file.size)}. The limit is ${formatSize(state.fileMaxBytes)}.`);
+  const total = state.pendingFiles.reduce((n, f) => n + f.size, 0) + file.size;
+  if (total > state.attachTotal) return showGifError(`Those files are too large together. The limit is ${formatSize(state.attachTotal)} for one message.`);
+  const data = await file.arrayBuffer();
+  const head = new Uint8Array(data, 0, Math.min(2, data.byteLength));
+  if (head[0] === 0x4d && head[1] === 0x5a) return showGifError(`“${name}” is a program, which can’t be sent.`);
+  const isImage = IMAGE_TYPES.includes(file.type);
+  const url = isImage ? URL.createObjectURL(new Blob([data], { type: file.type })) : null;
+  state.pendingFiles.push({ name, size: file.size, data, url, isImage });
+  renderPending();
+  updateSendState();
+  el.text.focus();
+}
+
+function renderPending() {
+  el.attachList.hidden = !state.pendingFiles.length;
+  el.attachList.replaceChildren(
+    ...state.pendingFiles.map((f, i) =>
+      h(
+        'div',
+        { class: 'attach-chip' },
+        f.isImage ? h('img', { class: 'attach-thumb', src: f.url, alt: '' }) : h('span', { class: 'attach-ext' }, fileLabel(f.name)),
+        h('span', { class: 'attach-chip-text' }, h('strong', { title: f.name }, f.name), h('small', null, formatSize(f.size))),
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'icon-btn small',
+            title: 'Remove',
+            'aria-label': `Remove ${f.name}`,
+            onclick: () => {
+              if (f.url) URL.revokeObjectURL(f.url);
+              state.pendingFiles.splice(i, 1);
+              renderPending();
+              updateSendState();
+            },
+          },
+          h('span', { 'aria-hidden': 'true' }, '✕'),
+        ),
+      ),
+    ),
+  );
+}
+
+function clearPending() {
+  for (const f of state.pendingFiles) if (f.url) URL.revokeObjectURL(f.url);
+  state.pendingFiles = [];
+  renderPending();
+  updateSendState();
+}
+
+el.attachBtn.addEventListener('click', () => el.attachInput.click());
+el.attachInput.addEventListener('change', async () => {
+  await addFiles(el.attachInput.files);
+  el.attachInput.value = '';
+});
+
+/** Attached files and images under a message. */
+function attachmentsNode(m) {
+  if (!m.attachments || !m.attachments.length) return null;
+  return h('div', { class: 'msg-attachments' }, ...m.attachments.map((a) => (a.kind === 'image' ? imageAttachment(m, a) : fileAttachment(m, a))));
+}
+
+function imageAttachment(m, a) {
+  if (!a.have) return h('div', { class: 'att-image-wait' }, a.expired ? 'Image archived (older than a week)' : 'Image is on its way…');
+  const img = h('img', { class: 'att-image', src: `okv-file://${a.hash}`, alt: a.name, width: a.w, height: a.h, draggable: 'false' });
+  img.addEventListener('error', () => img.closest('.att-image-btn').replaceWith(fileAttachment(m, a))); // can't be drawn: show it as a file
+  return h(
+    'button',
+    { type: 'button', class: 'att-image-btn', title: `${a.name} · ${formatSize(a.size)}. Click to enlarge`, onclick: () => openViewer({ src: `okv-file://${a.hash}`, file: a, message: m }) },
+    img,
+  );
+}
+
+function fileAttachment(m, a) {
+  const note = !a.have ? (a.expired ? 'Archived (older than a week)' : 'On its way…') : formatSize(a.size);
+  return h(
+    'div',
+    { class: ['att-file', !a.have && 'is-missing'] },
+    h('span', { class: 'att-icon' }, fileLabel(a.name)),
+    h('div', { class: 'att-meta' }, h('span', { class: 'att-name', title: a.name }, a.name), h('small', null, note)),
+    a.have ? h('div', { class: 'att-actions' }, h('button', { type: 'button', class: 'chip', onclick: () => openAttachment(a) }, 'Open'), h('button', { type: 'button', class: 'chip', onclick: () => saveAttachment(a) }, 'Save a copy')) : null,
+  );
+}
+
+function openAttachment(a) {
+  okv.openFile({ hash: a.hash, name: a.name }).catch((err) => toast(errText(err)));
+}
+
+async function saveAttachment(a) {
+  try {
+    const result = await okv.saveFile({ hash: a.hash, name: a.name });
+    if (!result.canceled) toast(`Saved ${a.name}`);
+  } catch (err) {
+    toast(errText(err));
+  }
+}
+
+// --- the picture viewer ---
+
+/** Opens a picture large. `file` is the attachment (absent for a GIF), `message` the message it came from. */
+function openViewer({ src, file, message }) {
+  state.viewing = { file, message };
+  el.viewerImg.src = src;
+  const who = `${deptLabel(message.from)}${message.author ? ` · ${message.author}` : ''} · ${whenLabel(message.createdAt)}`;
+  el.viewerTitle.textContent = file ? `${file.name} · ${formatSize(file.size)} · ${who}` : `GIF · ${who}`;
+  el.viewerSave.hidden = !file;
+  el.viewerOpen.hidden = !file;
+  el.viewer.hidden = false;
+}
+
+function closeViewer() {
+  state.viewing = null;
+  el.viewer.hidden = true;
+  el.viewerImg.removeAttribute('src');
+}
+
+el.viewerClose.addEventListener('click', closeViewer);
+el.viewerStage.addEventListener('click', (e) => {
+  if (e.target === el.viewerStage) closeViewer();
+});
+el.viewerSave.addEventListener('click', () => state.viewing && state.viewing.file && saveAttachment(state.viewing.file));
+el.viewerOpen.addEventListener('click', () => state.viewing && state.viewing.file && openAttachment(state.viewing.file));
+el.viewerShow.addEventListener('click', () => {
+  const id = state.viewing && state.viewing.message.id;
+  closeViewer();
+  if (id) showMessageInChat(id);
+});
+
+/** Goes to the Messages tab and scrolls to a message (for "Show in chat" from Media). */
+async function showMessageInChat(id) {
+  showScreen('board');
+  closeSearch();
+  state.filter = 'all';
+  for (const b of el.filters.querySelectorAll('button')) b.setAttribute('aria-selected', String(b.dataset.filter === 'all'));
+  await refresh({ toBottom: true });
+  await jumpToMessage(id);
+}
+
+// ---------- Media tab ----------
+
+let mediaRequest = 0;
+
+async function refreshMedia() {
+  if (!state.settings.department) return;
+  const mine = ++mediaRequest;
+  const result = await okv.listMedia({ filter: state.mediaFilter, search: state.mediaSearch });
+  if (mine !== mediaRequest) return; // a newer request has been made; don't let this older answer overwrite it
+  state.media = result;
+  renderMedia();
+}
+
+function renderMedia() {
+  const { items, counts, more } = state.media;
+  for (const b of el.mediaFilters.querySelectorAll('button')) {
+    b.querySelector('.count').textContent = counts[b.dataset.mfilter];
+    b.setAttribute('aria-selected', String(b.dataset.mfilter === state.mediaFilter));
+  }
+  el.mediaNote.textContent = `Files and images shared in chat are kept here for ${state.attachRetention} days, then archived automatically (they stay in the archive folder and in backups).`;
+
+  const isPicture = (x) => x.kind === 'image' || x.kind === 'gif';
+  const pictures = items.filter(isPicture);
+  const documents = items.filter((x) => !isPicture(x));
+  const nodes = [];
+  if (!items.length) {
+    nodes.push(
+      h(
+        'div',
+        { class: 'empty' },
+        h('strong', null, state.mediaSearch ? 'No matches' : 'Nothing shared yet'),
+        state.mediaSearch ? `No files or images match “${state.mediaSearch}”.` : 'Images and files you attach to messages (the paperclip, or paste or drop them) appear here.',
+      ),
+    );
+  }
+  if (pictures.length) {
+    nodes.push(h('h4', { class: 'media-heading' }, `Images · ${pictures.length}`), h('div', { class: 'media-grid' }, ...pictures.map(mediaTile)));
+  }
+  if (documents.length) {
+    nodes.push(h('h4', { class: 'media-heading' }, `Files · ${documents.length}`), h('div', { class: 'media-files' }, ...documents.map(mediaRow)));
+  }
+  if (more) nodes.push(h('p', { class: 'media-note' }, 'Showing the newest items. Use the search to find older ones.'));
+  el.mediaList.replaceChildren(...nodes);
+}
+
+function mediaWho(x) {
+  return `${deptLabel(x.from)}${x.author ? ` · ${x.author}` : ''} · ${whenLabel(x.createdAt)}`;
+}
+
+function mediaTile(x) {
+  const message = { id: x.messageId, from: x.from, author: x.author, createdAt: x.createdAt };
+  const src = x.kind === 'gif' ? `okv-gif://${x.hash}` : `okv-file://${x.hash}`;
+  if (!x.present) return h('div', { class: 'media-tile is-missing', title: mediaWho(x) }, x.archived ? 'Archived' : 'On its way…');
+  const file = x.kind === 'gif' ? undefined : { hash: x.hash, name: x.name, size: x.size };
+  return h(
+    'button',
+    { type: 'button', class: 'media-tile', title: `${x.name} · ${mediaWho(x)}`, onclick: () => openViewer({ src, file, message }) },
+    h('img', { src, alt: x.name, draggable: 'false' }),
+    h('span', { class: 'media-tile-cap' }, mediaWho(x)),
+  );
+}
+
+function mediaRow(x) {
+  const a = { hash: x.hash, name: x.name, size: x.size };
+  const note = !x.present ? (x.archived ? 'Archived (older than a week)' : 'On its way…') : formatSize(x.size);
+  return h(
+    'div',
+    { class: ['att-file', 'media-row', !x.present && 'is-missing'] },
+    h('span', { class: 'att-icon' }, fileLabel(x.name)),
+    h('div', { class: 'att-meta' }, h('span', { class: 'att-name', title: x.name }, x.name), h('small', null, `${note} · ${mediaWho(x)}`)),
+    h(
+      'div',
+      { class: 'att-actions' },
+      x.present ? h('button', { type: 'button', class: 'chip', onclick: () => openAttachment(a) }, 'Open') : null,
+      x.present ? h('button', { type: 'button', class: 'chip', onclick: () => saveAttachment(a) }, 'Save a copy') : null,
+      h('button', { type: 'button', class: 'chip is-quiet', onclick: () => showMessageInChat(x.messageId) }, 'Show in chat'),
+    ),
+  );
+}
+
+el.mediaFilters.addEventListener('click', (e) => {
+  const button = e.target.closest('button[data-mfilter]');
+  if (!button) return;
+  state.mediaFilter = button.dataset.mfilter;
+  refreshMedia();
+});
+
+let mediaSearchTimer;
+el.mediaSearch.addEventListener('input', () => {
+  clearTimeout(mediaSearchTimer);
+  mediaSearchTimer = setTimeout(() => {
+    state.mediaSearch = el.mediaSearch.value.trim();
+    refreshMedia();
+  }, 180);
+});
 
 // ---------- GIFs ----------
 
@@ -1588,17 +1895,16 @@ document.addEventListener('paste', async (e) => {
         await attachGif(new File([got.data], got.name, { type: 'image/gif' }));
       }
     } catch {
-      showGifError('Couldn’t get that GIF. Saving it as a file and using the GIF button works too.');
+      showGifError('Couldn’t get that GIF. Saving it as a file and attaching it with the paperclip works too.');
       okv.logNote(describePaste(cd, html));
     }
     return;
   }
 
   if (files.length) {
-    // A picture, but not a GIF we can read (often a still frame of one).
+    // Pictures (a screenshot, say) and files copied in Explorer attach to the message.
     e.preventDefault();
-    showGifError('That paste is a still picture, not a GIF. Save the GIF as a file and use the GIF button.');
-    okv.logNote(describePaste(cd, html));
+    addFiles(files);
   }
 });
 
@@ -1606,7 +1912,7 @@ document.addEventListener('paste', async (e) => {
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => {
   e.preventDefault();
-  if (state.expanded && state.screen === 'board') attachGif([...e.dataTransfer.files].find((f) => /gif$/i.test(f.type) || /\.gif$/i.test(f.name)));
+  if (state.expanded && state.screen === 'board') addFiles(e.dataTransfer.files);
 });
 
 el.to.addEventListener('change', updatePlaceholder);
@@ -1629,7 +1935,7 @@ el.author.addEventListener('change', async () => {
 el.compose.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = el.text.value.trim();
-  if ((!text && !state.gif) || state.sending) return;
+  if ((!text && !state.gif && !state.pendingFiles.length) || state.sending) return;
   state.sending = true;
   updateSendState();
   try {
@@ -1639,9 +1945,11 @@ el.compose.addEventListener('submit', async (e) => {
       urgent: state.urgent,
       author: el.author.value,
       gif: state.gif ? { data: state.gif.data } : undefined,
+      files: state.pendingFiles.length ? state.pendingFiles.map((f) => ({ name: f.name, data: f.data })) : undefined,
       replyTo: state.reply ? state.reply.id : undefined,
     });
     clearGif();
+    clearPending();
     clearReply();
     el.text.value = '';
     autoGrow();
@@ -1649,8 +1957,10 @@ el.compose.addEventListener('submit', async (e) => {
     if (state.filter !== 'all' && state.filter !== 'from-us') {
       toast('Sent');
     }
-  } catch {
-    el.composeError.textContent = 'Message not sent. Please try again.';
+  } catch (err) {
+    const reason = errText(err);
+    // Reasons about the files themselves are worth showing; anything else gets the usual message.
+    el.composeError.textContent = /file|attach|GIF|MB/i.test(reason) ? reason : 'Message not sent. Please try again.';
     el.composeError.hidden = false;
   } finally {
     state.sending = false;
@@ -1936,6 +2246,7 @@ document.addEventListener('keydown', (e) => {
 okv.onView(applyView);
 
 okv.onMessages(({ messages, alert }) => {
+  if (state.screen === 'media') refreshMedia();
   if (alert) {
     chime(alert === 'urgent');
     if (!state.expanded) bump();
@@ -1951,12 +2262,20 @@ okv.onMessages(({ messages, alert }) => {
 
 // A message was deleted or restored, here or on another computer.
 okv.onMessagesChanged(() => {
+  if (state.screen === 'media') refreshMedia();
   if (state.settings.department) refresh();
 });
 
 // A GIF that was still on its way has arrived from another computer.
 okv.onGifReady(() => {
   if (state.settings.department && state.screen === 'board') refresh();
+  if (state.screen === 'media') refreshMedia();
+});
+
+// A file or image that was still on its way has arrived from another computer.
+okv.onFileReady(() => {
+  if (state.settings.department && state.screen === 'board') refresh();
+  if (state.screen === 'media') refreshMedia();
 });
 
 okv.onUnread(({ count, urgent, reminders }) => {
@@ -2000,6 +2319,12 @@ async function init() {
     departments: s.departments,
     reactionChoices: s.reactions || [],
     gifMaxBytes: s.gifMaxBytes || state.gifMaxBytes,
+    attachPlaceholder: s.attachPlaceholder || state.attachPlaceholder,
+    fileMaxBytes: s.fileMaxBytes || state.fileMaxBytes,
+    maxAttach: s.maxAttachments || state.maxAttach,
+    attachTotal: s.attachTotalBytes || state.attachTotal,
+    attachRetention: s.attachmentRetentionDays || state.attachRetention,
+    blockedExt: new Set(s.blockedExtensions || []),
     pin: s.pin,
     editWindowMs: s.editWindowMs || state.editWindowMs,
     retentionDays: s.retentionDays || state.retentionDays,

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: okv-gif:; font-src 'self'"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: okv-gif: okv-file:; font-src 'self'"
     />
     <title>OKV Messenger</title>
     <link rel="stylesheet" href="styles.css" />
@@ -49,6 +49,7 @@
         <button type="button" role="tab" data-section="reminders">
           Reminders <span id="badge-reminders" class="sec-badge" hidden></span>
         </button>
+        <button type="button" role="tab" data-section="media">Media</button>
       </nav>
 
       <!-- First run -->
@@ -130,7 +131,12 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
             </button>
           </div>
+          <div id="attach-list" class="attach-list" hidden></div>
           <div class="compose-row">
+            <button id="attach-btn" class="attach-btn" type="button" title="Attach files or images (you can also paste or drop them)" aria-label="Attach files or images">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 11.5-8.6 8.6a5 5 0 0 1-7-7l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.7 8.6a1.7 1.7 0 0 1-2.3-2.3l7.9-7.9"/></svg>
+            </button>
+            <input id="attach-input" type="file" multiple hidden />
             <textarea id="text" rows="1" maxlength="4000" placeholder="Message everyone…" aria-label="Message"></textarea>
             <button id="send" class="send" type="submit" disabled aria-label="Send">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></svg>
@@ -138,6 +144,22 @@
           </div>
           <p id="compose-error" class="compose-error" role="alert" hidden></p>
         </form>
+      </div>
+
+      <!-- Media: images, files and GIFs shared in chat -->
+      <div id="screen-media" class="screen media" hidden>
+        <div class="toolbar">
+          <div id="media-filters" class="filters" role="tablist" aria-label="Show media">
+            <button type="button" role="tab" data-mfilter="all" aria-selected="true">All <span class="count"></span></button>
+            <button type="button" role="tab" data-mfilter="images" aria-selected="false">Images <span class="count"></span></button>
+            <button type="button" role="tab" data-mfilter="files" aria-selected="false">Files <span class="count"></span></button>
+          </div>
+          <input id="media-search" class="media-search" type="search" placeholder="Search" aria-label="Search files" spellcheck="false" />
+        </div>
+        <div class="list-wrap">
+          <div id="media-list" class="list media-list" tabindex="-1"></div>
+        </div>
+        <p id="media-note" class="media-note"></p>
       </div>
 
       <!-- Reminders -->
@@ -248,6 +270,19 @@
             <p class="about-line"><button id="open-data" type="button" class="link-btn">Open message history folder</button></p>
           </section>
         </div>
+      </div>
+
+      <div id="viewer" class="viewer" role="dialog" aria-label="Image" hidden>
+        <div class="viewer-bar">
+          <span id="viewer-title" class="viewer-title"></span>
+          <button id="viewer-show" class="chip" type="button">Show in chat</button>
+          <button id="viewer-save" class="chip" type="button">Save a copy</button>
+          <button id="viewer-open" class="chip" type="button">Open</button>
+          <button id="viewer-close" class="icon-btn" type="button" title="Close (Esc)" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+        <div id="viewer-stage" class="viewer-stage"><img id="viewer-img" alt="" /></div>
       </div>
 
       <div id="toast" class="toast" role="status" hidden>

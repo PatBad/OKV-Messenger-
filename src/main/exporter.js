@@ -70,7 +70,7 @@ function cell(value) {
  * The caller writes it with a byte-order mark so Excel opens the accents and emoji correctly.
  */
 function toCsv(messages, { label = (id) => id, edited = () => false } = {}) {
-  const rows = [['Date', 'Time', 'From', 'Name', 'To', 'Urgent', 'Message', 'GIF', 'Edited']];
+  const rows = [['Date', 'Time', 'From', 'Name', 'To', 'Urgent', 'Message', 'GIF', 'Edited', 'Attachments']];
   for (const m of messages) {
     const d = new Date(m.createdAt);
     rows.push([
@@ -80,9 +80,10 @@ function toCsv(messages, { label = (id) => id, edited = () => false } = {}) {
       m.author,
       m.to === 'all' ? 'Everyone' : label(m.to),
       m.urgent ? 'Yes' : 'No',
-      m.gif && m.text === '[GIF]' ? '' : m.text,
+      (m.gif && m.text === '[GIF]') || (m.attachments && m.text === '[Attachment]') ? '' : m.text,
       m.gif ? 'Yes' : 'No',
       edited(m) ? 'Yes' : 'No',
+      (m.attachments || []).map((a) => a.name).join('; '),
     ]);
   }
   return rows.map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n';

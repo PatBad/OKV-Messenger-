@@ -7,6 +7,8 @@ const { EventEmitter } = require('events');
 const { NETWORK, DEPARTMENT_IDS, LIMITS } = require('./constants');
 const { HASH } = require('./gifs');
 
+const dayOf = (ts) => new Date(ts).toISOString().slice(0, 10);
+
 const API = '/okv/v1';
 const HEADER = 'x-okv-app';
 
@@ -76,6 +78,9 @@ class Network extends EventEmitter {
     pins = null,
     version = null,
     gifs = null,
+    files = null,
+    fileRetentionDays = null,
+    shouldFetch = null,
     peerId,
     getProfile,
     log,
@@ -109,12 +114,18 @@ class Network extends EventEmitter {
     // This app's version, announced in every beacon so computers can see who has updated.
     this.version = version;
     this.store = store;
-    // GIF files. Messages only carry a GIF's fingerprint; the file itself is fetched
-    // from whichever computer has it (GET /gifs/<fingerprint>).
-    this.gifs = gifs;
-    this.wantedGifs = new Set();
-    this._fetchingGifs = false;
-    this._fetchGifsTimer = null;
+    // GIFs and attached files. Messages only carry a file's fingerprint; the file itself is fetched
+    // from whichever computer has it (GET /gifs/<fingerprint> or /files/<fingerprint>).
+    this.blobs = {};
+    if (gifs) this.blobs.gifs = { store: gifs, max: LIMITS.GIF_BYTES, type: 'image/gif' };
+    if (files) this.blobs.files = { store: files, max: LIMITS.FILE_BYTES, type: 'application/octet-stream' };
+    // Attached files are only kept for this many days, so none are fetched for older messages.
+    this.fileRetentionDays = fileRetentionDays;
+    // Lets the app say a message's files are no longer wanted (e.g. it was deleted for everyone).
+    this.shouldFetch = shouldFetch;
+    this.wanted = new Map(); // fingerprint -> { kind: 'gifs' | 'files', createdAt }
+    this._fetchingBlobs = false;
+    this._fetchBlobsTimer = null;
     this.peerId = peerId;
     this.getProfile = getProfile;
     this.log = log || { info() {}, warn() {}, error() {} };
@@ -133,14 +144,14 @@ class Network extends EventEmitter {
     this._beaconSoonTimer = null;
     this._onStoreAdded = () => this.announce();
     for (const c of this.collections) c.store.on('added', this._onStoreAdded);
-    this._onMessagesAdded = (messages) => this._wantGifs(messages);
+    this._onMessagesAdded = (messages) => this._wantBlobs(messages);
     store.on('added', this._onMessagesAdded);
   }
 
   async start() {
     await this._startHttp();
     await this._startUdp();
-    this._wantGifs(this.store.sorted || []);
+    this._wantBlobs(this.store.sorted || []);
     this.timers.push(setInterval(() => this._tick(), this.beaconIntervalMs));
     return this;
   }
@@ -151,7 +162,7 @@ class Network extends EventEmitter {
     clearTimeout(this._beaconSoonTimer);
     for (const c of this.collections) c.store.off('added', this._onStoreAdded);
     this.store.off('added', this._onMessagesAdded);
-    clearTimeout(this._fetchGifsTimer);
+    clearTimeout(this._fetchBlobsTimer);
     if (this.udp) this.udp.close();
     if (this.server) this.server.close();
     this.agent.destroy();
@@ -226,13 +237,14 @@ class Network extends EventEmitter {
       if (!url.pathname.startsWith(API)) return send(404, { error: 'not found' });
       const rest = url.pathname.slice(API.length);
 
-      // A GIF file, by its fingerprint. Anything that isn't exactly 64 hex characters is refused,
-      // so a request can never name a file outside the GIF folder.
-      if (req.method === 'GET' && rest.startsWith('/gifs/')) {
-        const hash = rest.slice('/gifs/'.length);
-        const file = this.gifs && HASH.test(hash) ? this.gifs.read(hash) : null;
+      // A GIF or attached file, by its fingerprint. Anything that isn't exactly 64 hex characters is refused,
+      // so a request can never name a file outside the folder.
+      const blobRoute = req.method === 'GET' ? /^\/(gifs|files)\/(.*)$/.exec(rest) : null;
+      if (blobRoute) {
+        const blob = this.blobs[blobRoute[1]];
+        const file = blob && HASH.test(blobRoute[2]) ? blob.store.read(blobRoute[2]) : null;
         if (!file) return send(404, { error: 'not found' });
-        res.writeHead(200, { 'content-type': 'image/gif', 'content-length': file.length });
+        res.writeHead(200, { 'content-type': blob.type, 'content-length': file.length, 'x-content-type-options': 'nosniff' });
         return res.end(file);
       }
       const c = this.collections.find((x) => x.prefix && rest.startsWith(`${x.prefix}/`)) || this.collections[0];
@@ -328,46 +340,56 @@ class Network extends EventEmitter {
     });
   }
 
-  // ---------- GIF files ----------
+  // ---------- GIFs and attached files ----------
 
-  /** Notes which of these messages' GIFs this computer doesn't have yet, and goes to get them. */
-  _wantGifs(messages) {
-    if (!this.gifs) return;
+  /** Notes which of these messages' GIFs and files this computer doesn't have yet, and goes to get them. */
+  _wantBlobs(messages) {
+    const cutoff = this.fileRetentionDays ? dayOf(Date.now() - this.fileRetentionDays * 86400000) : null;
     let any = false;
     for (const m of messages) {
-      if (m.gif && !this.gifs.has(m.gif.hash)) {
-        this.wantedGifs.add(m.gif.hash);
+      if (this.shouldFetch && !this.shouldFetch(m)) continue;
+      if (m.gif && this.blobs.gifs && !this.blobs.gifs.store.has(m.gif.hash)) {
+        this.wanted.set(m.gif.hash, { kind: 'gifs', createdAt: m.createdAt });
         any = true;
       }
+      if (m.attachments && this.blobs.files && !(cutoff && dayOf(m.createdAt) < cutoff)) {
+        for (const a of m.attachments) {
+          if (this.blobs.files.store.has(a.hash)) continue;
+          this.wanted.set(a.hash, { kind: 'files', createdAt: m.createdAt });
+          any = true;
+        }
+      }
     }
-    if (any) this._fetchGifsSoon();
+    if (any) this._fetchBlobsSoon();
   }
 
-  _fetchGifsSoon() {
-    if (this._fetchGifsTimer || this.stopped) return;
-    this._fetchGifsTimer = setTimeout(() => {
-      this._fetchGifsTimer = null;
-      this._fetchGifs();
+  _fetchBlobsSoon() {
+    if (this._fetchBlobsTimer || this.stopped) return;
+    this._fetchBlobsTimer = setTimeout(() => {
+      this._fetchBlobsTimer = null;
+      this._fetchBlobs();
     }, 150);
   }
 
-  /** Asks each known computer in turn for every GIF still missing; whatever can't be found is retried on the next tick. */
-  async _fetchGifs() {
-    if (this._fetchingGifs || this.stopped || !this.gifs) return;
-    this._fetchingGifs = true;
+  /** Asks each known computer in turn for everything still missing; whatever can't be found is retried on the next tick. */
+  async _fetchBlobs() {
+    if (this._fetchingBlobs || this.stopped) return;
+    this._fetchingBlobs = true;
     try {
-      for (const hash of [...this.wantedGifs]) {
-        if (this.gifs.has(hash)) {
-          this.wantedGifs.delete(hash);
+      const cutoff = this.fileRetentionDays ? dayOf(Date.now() - this.fileRetentionDays * 86400000) : null;
+      for (const [hash, { kind, createdAt }] of [...this.wanted]) {
+        const blob = this.blobs[kind];
+        if (!blob || blob.store.has(hash) || (kind === 'files' && cutoff && dayOf(createdAt) < cutoff)) {
+          this.wanted.delete(hash); // already here, or too old to be worth fetching now
           continue;
         }
         for (const peer of [...this.peerMap.values()]) {
           if (this.stopped) return;
           try {
-            const file = await this._requestBinary(peer, `/gifs/${hash}`, LIMITS.GIF_BYTES);
-            this.gifs.addVerified(hash, file);
-            this.wantedGifs.delete(hash);
-            this.log.info(`received a GIF (${Math.round(file.length / 1024)} KB) from ${peer.host || peer.address}`);
+            const file = await this._requestBinary(peer, `/${kind}/${hash}`, blob.max);
+            blob.store.addVerified(hash, file);
+            this.wanted.delete(hash);
+            this.log.info(`received a ${kind === 'gifs' ? 'GIF' : 'file'} (${Math.round(file.length / 1024)} KB) from ${peer.host || peer.address}`);
             break;
           } catch {
             // that computer doesn't have it (or is unreachable); try the next
@@ -375,7 +397,7 @@ class Network extends EventEmitter {
         }
       }
     } finally {
-      this._fetchingGifs = false;
+      this._fetchingBlobs = false;
     }
   }
 
@@ -586,7 +608,7 @@ class Network extends EventEmitter {
     if (removed) this.emit('peers', this.peers());
     this._sendBeacon('hello');
     for (const peer of this.peerMap.values()) this._maybeSync(peer);
-    if (this.wantedGifs.size) this._fetchGifs();
+    if (this.wanted.size) this._fetchBlobs();
   }
 }
 

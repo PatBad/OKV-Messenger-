@@ -16,6 +16,9 @@ const TO_ALL = 'all';
 // runs on every computer, so they all agree on what's still "live" and stay in sync.
 const RETENTION_DAYS = 14;
 
+// Files and images attached to messages are kept (and shown in the Media tab) for this long, then archived.
+const ATTACHMENT_RETENTION_DAYS = 7;
+
 // How long after sending a message its sender may still edit it.
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
@@ -32,6 +35,9 @@ const MAX_QUICK_MESSAGES = 8;
 // A GIF message carries this as its text, so computers on versions that predate GIFs
 // (which reject messages without text) still accept it and show "[GIF]".
 const GIF_PLACEHOLDER = '[GIF]';
+
+// Likewise for a message that is only attachments (older versions need some text).
+const ATTACH_PLACEHOLDER = '[Attachment]';
 
 // Emoji reactions offered on messages, in the order they're shown.
 // Entries in :colons: are custom pictures in assets/reactions (see the page's CUSTOM_REACTIONS).
@@ -57,6 +63,11 @@ const LIMITS = {
   PIN: 300,
   // Largest GIF that can be sent (computers keep every GIF that's sent).
   GIF_BYTES: 4 * 1024 * 1024,
+  // Attached files and images.
+  FILE_BYTES: 15 * 1024 * 1024,
+  MAX_ATTACHMENTS: 5,
+  ATTACH_TOTAL_BYTES: 40 * 1024 * 1024,
+  FILE_NAME: 120,
   AUTHOR: 40,
   HOST: 64,
   // Timestamps outside this window are treated as corrupt.
@@ -69,8 +80,10 @@ module.exports = {
   DEPARTMENT_IDS,
   TO_ALL,
   GIF_PLACEHOLDER,
+  ATTACH_PLACEHOLDER,
   REACTIONS,
   RETENTION_DAYS,
+  ATTACHMENT_RETENTION_DAYS,
   EDIT_WINDOW_MS,
   DEFAULT_QUICK_MESSAGES,
   MAX_QUICK_MESSAGES,

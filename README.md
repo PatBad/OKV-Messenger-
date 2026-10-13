@@ -18,6 +18,8 @@ There is no server and no internet requirement. Every computer keeps its own com
 | Minimise back to the logo | Click **—** or press **Esc** |
 | Send | Type and press **Enter** (**Shift+Enter** for a new line) |
 | Send a GIF | Paste one (Ctrl+V, or pick one in the Windows emoji panel with Win + ;) or drop a GIF file onto the board, add a caption if you like and press Send. GIFs can be up to 4 MB. Every PC keeps its own copy, so they work without internet |
+| Attach files and images | Click the paperclip beside the message box, paste (Ctrl+V; screenshots and files copied in Explorer work), or drop files onto the board. Up to 5 files of up to 15 MB each per message. Images show in the chat and open larger when clicked; other files show with **Open** and **Save a copy**. Programs, scripts, web pages (.exe, .bat, .ps1, .lnk, .html …), SVGs and macro-enabled Office files can't be sent |
+| Find a shared file again | The **Media** tab lists the images, files and GIFs shared in chat (filter by All / Images / Files, or search by name or sender). Click a picture to enlarge it; **Show in chat** jumps to the message. Files are kept for 7 days, then archived automatically |
 | Reply to a message | Point at it and click the reply arrow. A "Replying to…" strip appears above the message box, and the reply goes to the department that sent the original (change **To** if you want). The reply shows a quote of the original; click the quote to jump to it. **Esc** cancels the reply |
 | Send a quick message | Click one of the buttons above the message box (such as "Client has arrived"). It sends straight away, with a few seconds to **Undo**. Change the buttons in **Settings → Quick messages** (wording, who it goes to, urgent or not) |
 | Fix a typo | Point at your own message, click **⋯** then **Edit message**. You can edit for 15 minutes after sending, and it shows "edited". Only the department that sent a message can edit it |
@@ -59,6 +61,8 @@ The installer puts the app in the current Windows user's profile, so future upda
 A GIF is stored once on each PC in `history\gifs\`, named by a fingerprint of its contents; the message only carries that fingerprint, and each PC fetches any GIF it is missing directly from another PC on the clinic network. (On PCs still on an older version, a GIF message shows as "[GIF]".)
 
 ### Automatic tidy-up and backups
+
+Attached files and images are archived sooner: after **7 days** (`ATTACHMENT_RETENTION_DAYS` in `src/main/constants.js`) their files move to `history\archive\files\` and leave the Media tab, while the messages themselves stay on the board for the full 14 days (showing "archived" where the file was). Files on a message that was deleted for everyone are removed straight away. Each file is stored once per computer, named by a fingerprint of its contents, and computers fetch files they're missing directly from each other; `history\files` holds them.
 
 Every computer keeps the last **14 days** of messages "live". Anything older is archived automatically when the app starts and every few hours afterwards: messages move to `history\archive\messages-YYYY-MM.jsonl` and their GIFs to `history\archive\gifs\`. Archived messages no longer show on the board, but they aren't lost: **Settings → History → Save as spreadsheet → Everything, including the archive** includes them. Messages that were deleted are not archived, and their GIFs are removed. The same rule runs on every computer, so they stay in step; the number of days is `RETENTION_DAYS` in `src/main/constants.js` (changing it needs a new release).
 
@@ -122,7 +126,7 @@ $env:OKV_DATA_DIR = "$PWD\.dev-data\a"; $env:OKV_BIND = "127.0.0.1"; $env:OKV_UD
 $env:OKV_DATA_DIR = "$PWD\.dev-data\b"; $env:OKV_BIND = "127.0.0.1"; $env:OKV_UDP_PORT = "42334"; $env:OKV_TCP_PORT = "42335"; $env:OKV_PEERS = "127.0.0.1:42234"; npm start
 ```
 
-The development-only variable `OKV_TEST_PICK` (a folder path) makes the export and backup buttons save into that folder instead of opening file dialogs, so they can be tested automatically.
+The development-only variable `OKV_TEST_PICK` (a folder path) makes the export, backup and "Save a copy" buttons save into that folder instead of opening file dialogs, and stops "Open" launching programs, so they can be tested automatically.
 
 ### Project layout
 
@@ -133,6 +137,8 @@ src/main/network.js    Peer discovery (UDP) and sync (HTTP) between computers
 src/main/gifs.js      GIF files kept on this PC: checking, storing by fingerprint
 src/main/geometry.js   Window-resizing maths
 src/main/exporter.js   Saving messages as CSV, reading the archive, backups
+src/main/files.js      Attached files: safety checks (blocked types, programs by content), storage by fingerprint
+src/main/media.js      What the Media tab lists
 src/main/updater.js    Auto-update from GitHub Releases
 src/main/config.js     Per-computer settings (department, icon position, board size, …)
 src/preload.js         The safe bridge between the window and the main process

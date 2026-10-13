@@ -30,7 +30,7 @@ test('the CSV has one row per message and is safe to open in a spreadsheet', () 
   const labels = { reception: 'Reception', clinical: 'Clinical Team', principal: 'Practice Principal' };
   const csv = toCsv(messages, { label: (id) => labels[id], edited: (m) => m.id === messages[0].id });
   const lines = csv.split('\r\n');
-  assert.equal(lines[0], 'Date,Time,From,Name,To,Urgent,Message,GIF,Edited');
+  assert.equal(lines[0], 'Date,Time,From,Name,To,Urgent,Message,GIF,Edited,Attachments');
   assert.ok(csv.includes('2026-10-14,09:05:07,Reception,Thandi,Clinical Team,Yes,"Room 2, ""Bella"" is here,\nand her owner",No,Yes'));
   assert.ok(csv.includes("'=HYPERLINK"), 'a formula is neutralised');
   assert.ok(!csv.includes(',=HYPERLINK'), 'and never starts a cell');

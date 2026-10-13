@@ -88,4 +88,41 @@ function makeGif({ width = 24, height = 24, frames = 3, seed = 0 } = {}) {
   return Buffer.from(out);
 }
 
-module.exports = { tempDir, makeMessage, waitFor, makeGif };
+/** A real, valid PNG (a colour gradient), so tests and the app can use genuine images. */
+function makePng({ width = 64, height = 48, seed = 0 } = {}) {
+  const zlib = require('zlib');
+  const stride = width * 3 + 1;
+  const raw = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * stride + 1 + x * 3;
+      raw[i] = (x * 4 + seed * 40) & 255;
+      raw[i + 1] = (y * 5 + 60) & 255;
+      raw[i + 2] = ((x + y) * 2 + seed * 20 + 40) & 255;
+    }
+  }
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(body) >>> 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+
+/** Just enough of a JPEG (header and frame marker) to read its size; not a picture that can be drawn. */
+function makeJpegHeader({ width = 640, height = 480 } = {}) {
+  const u16 = (n) => [(n >> 8) & 255, n & 255];
+  return Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, ...Buffer.from('JFIF\0'), 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xc0, 0x00, 0x11, 8, ...u16(height), ...u16(width), 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1, 0xff, 0xd9]);
+}
+
+/** A small PDF-looking document: content doesn't matter, only that it's an ordinary file. */
+const makePdf = (text = 'hello') => Buffer.from(`%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n% ${text}\n%%EOF\n`);
+
+module.exports = { tempDir, makeMessage, waitFor, makeGif, makePng, makeJpegHeader, makePdf };
