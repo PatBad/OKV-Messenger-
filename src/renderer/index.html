@@ -82,6 +82,13 @@
         </div>
 
         <form id="compose" class="compose" autocomplete="off">
+          <div id="reply-bar" class="reply-bar" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/></svg>
+            <span class="reply-bar-text"><strong id="reply-who"></strong><small id="reply-snippet"></small></span>
+            <button id="reply-cancel" class="icon-btn small" type="button" title="Cancel reply (Esc)" aria-label="Cancel reply">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </div>
           <div class="compose-meta">
             <label class="pill-select">
               <span>To</span>
@@ -101,8 +108,6 @@
             </button>
           </div>
           <div class="compose-row">
-            <button id="gif-btn" class="gif-btn" type="button" title="Attach a GIF (or drop one onto the board)">GIF</button>
-            <input id="gif-file" type="file" accept="image/gif" hidden />
             <textarea id="text" rows="1" maxlength="4000" placeholder="Message everyone…" aria-label="Message"></textarea>
             <button id="send" class="send" type="submit" disabled aria-label="Send">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></svg>

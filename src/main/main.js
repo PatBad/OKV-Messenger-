@@ -573,7 +573,11 @@ ipcMain.handle('query', (_e, opts = {}) => {
   const limit = Number.isInteger(opts.limit) ? clamp(opts.limit, 1, 1000) : 150;
   const result = store.query({ ...queryFilters(opts), before, limit });
   // Copies, so the stored messages don't get a reactions field.
-  result.messages = result.messages.map((m) => ({ ...m, reactions: reactions.forMessage(m.id, REACTIONS) }));
+  result.messages = result.messages.map((m) => ({
+    ...m,
+    reactions: reactions.forMessage(m.id, REACTIONS),
+    reply: m.replyTo ? store.quote(m.replyTo, isRemoved) : null,
+  }));
   return result;
 });
 
@@ -595,6 +599,7 @@ ipcMain.handle('send-message', (_e, input = {}) => {
         host: HOST,
         text: gif && !text ? GIF_PLACEHOLDER : input.text,
         gif,
+        replyTo: typeof input.replyTo === 'string' && store.has(input.replyTo) ? input.replyTo : undefined,
         urgent: input.urgent === true,
         createdAt: Date.now(),
       },

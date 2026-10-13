@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
-const { DEPARTMENT_IDS, TO_ALL, LIMITS } = require('./constants');
+const { DEPARTMENT_IDS, TO_ALL, GIF_PLACEHOLDER, LIMITS } = require('./constants');
 
 const ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
 
@@ -62,6 +62,8 @@ function sanitizeMessage(m) {
   };
   const gif = sanitizeGif(m.gif);
   if (gif) message.gif = gif;
+  // A reply carries only the id of the message it answers; each computer works out the quote itself.
+  if (validId(m.replyTo)) message.replyTo = m.replyTo;
   return message;
 }
 
@@ -359,6 +361,27 @@ class MessageStore extends RecordLog {
       out.push(m);
     }
     return { messages: out.reverse(), more };
+  }
+
+  /**
+   * What to show as the quote in a reply to message `id`: the original's sender and a short snippet,
+   * or why there's nothing to show ('removed' if it was deleted, 'missing' if it hasn't reached this computer).
+   * A deleted message's text is never quoted.
+   */
+  quote(id, exclude = null) {
+    const original = this.byId.get(id);
+    if (!original) return { state: 'missing' };
+    if (exclude && exclude(original)) return { state: 'removed' };
+    const isGifOnly = Boolean(original.gif) && original.text === GIF_PLACEHOLDER;
+    const flat = isGifOnly ? '' : original.text.replace(/\s+/g, ' ').trim();
+    return {
+      state: 'ok',
+      id: original.id,
+      from: original.from,
+      author: original.author,
+      text: flat.length > 160 ? `${flat.slice(0, 160).trimEnd()}…` : flat,
+      gif: Boolean(original.gif),
+    };
   }
 
   /** Messages from other computers, addressed to us, that arrived after lastReadAt. */

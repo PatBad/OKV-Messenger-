@@ -39,8 +39,10 @@ const el = {
   text: $('text'),
   send: $('send'),
   composeError: $('compose-error'),
-  gifBtn: $('gif-btn'),
-  gifFile: $('gif-file'),
+  replyBar: $('reply-bar'),
+  replyWho: $('reply-who'),
+  replySnippet: $('reply-snippet'),
+  replyCancel: $('reply-cancel'),
   gifAttached: $('gif-attached'),
   gifThumb: $('gif-thumb'),
   gifName: $('gif-name'),
@@ -93,6 +95,7 @@ const state = {
   urgent: false,
   sending: false,
   gif: null, // the GIF waiting to be sent: { data, name, size, url }
+  reply: null, // the message being replied to: { id, from, author, text, gif }
   gifMaxBytes: 4 * 1024 * 1024,
   hasUrgentUnread: false,
   // Days the user has opened or closed (dayKey -> open). Otherwise only today is open.
@@ -149,6 +152,8 @@ function dayLabel(ts) {
 
 // Static, trusted SVG markup for small icons.
 const ICONS = {
+  reply:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/></svg>',
   trash:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg>',
 };
@@ -469,7 +474,7 @@ function messageNode(m) {
   const toUs = m.to !== 'all' && m.to === dept;
   return h(
     'article',
-    { class: ['msg', `dept-${m.from}`, m.urgent && 'is-urgent', m.local && 'is-mine', isNew(m) && 'is-new'] },
+    { class: ['msg', `dept-${m.from}`, m.urgent && 'is-urgent', m.local && 'is-mine', isNew(m) && 'is-new'], 'data-id': m.id },
     h(
       'header',
       { class: 'msg-head' },
@@ -479,6 +484,7 @@ function messageNode(m) {
       m.urgent ? h('span', { class: 'msg-tag' }, 'Urgent') : null,
       h('time', { class: 'msg-time', datetime: new Date(m.createdAt).toISOString(), title: fullFmt.format(m.createdAt) }, timeFmt.format(m.createdAt)),
     ),
+    quoteNode(m),
     // A GIF message has "[GIF]" as its text unless the sender typed a caption.
     m.gif && m.text === GIF_PLACEHOLDER ? null : h('p', { class: 'msg-text' }, m.text),
     gifNode(m),
@@ -487,6 +493,8 @@ function messageNode(m) {
     h(
       'div',
       { class: 'msg-actions', role: 'toolbar', 'aria-label': 'Message actions' },
+      h('button', { type: 'button', class: 'msg-reply', title: 'Reply', 'aria-label': 'Reply to this message', onclick: () => setReply(m) }, icon('reply')),
+      h('span', { class: 'msg-actions-sep' }),
       ...state.reactionChoices.map((emoji) => {
         const on = hasReacted(m, emoji);
         return h(
@@ -850,7 +858,7 @@ function renderComposeTargets() {
 }
 
 function updatePlaceholder() {
-  el.text.placeholder = el.to.value === 'all' ? 'Message everyone…' : `Message ${toLabel(el.to.value)}…`;
+  el.text.placeholder = state.reply ? 'Write your reply…' : el.to.value === 'all' ? 'Message everyone…' : `Message ${toLabel(el.to.value)}…`;
 }
 
 function setUrgent(value) {
@@ -866,6 +874,67 @@ function autoGrow() {
 
 function updateSendState() {
   el.send.disabled = state.sending || (!el.text.value.trim() && !state.gif);
+}
+
+// ---------- Replies ----------
+
+/** The quote shown above a reply: who sent the original and a snippet, which jumps to it when clicked. */
+function quoteNode(m) {
+  if (!m.replyTo) return null;
+  const q = m.reply;
+  if (!q || q.state !== 'ok') {
+    const why = q && q.state === 'removed' ? 'The original message was deleted' : 'The original message isn’t on this computer';
+    return h('div', { class: 'msg-quote is-gone' }, why);
+  }
+  return h(
+    'button',
+    { type: 'button', class: ['msg-quote', `dept-${q.from}`], title: 'Go to the original message', onclick: () => jumpToMessage(q.id) },
+    h('span', { class: 'msg-quote-who' }, q.author ? `${deptLabel(q.from)} · ${q.author}` : deptLabel(q.from)),
+    h('span', { class: 'msg-quote-text' }, q.text || (q.gif ? 'GIF' : '')),
+  );
+}
+
+/** Starts a reply to a message: shows the strip above the message box and addresses the reply sensibly. */
+function setReply(m) {
+  const me = state.settings.department;
+  const isGifOnly = Boolean(m.gif) && m.text === GIF_PLACEHOLDER;
+  state.reply = { id: m.id, from: m.from, author: m.author, text: isGifOnly ? '' : m.text.replace(/\s+/g, ' ').trim(), gif: Boolean(m.gif) };
+  // Reply to whoever sent it; if it was our own message, carry on to whoever we sent it to.
+  el.to.value = m.from !== me ? m.from : m.to;
+  updatePlaceholder();
+  el.replyWho.textContent = `Replying to ${m.from === me ? 'yourself' : deptLabel(m.from)}${m.author ? ` · ${m.author}` : ''}`;
+  el.replySnippet.textContent = state.reply.text || (m.gif ? 'GIF' : '');
+  el.replyBar.hidden = false;
+  el.text.placeholder = 'Write your reply…';
+  el.text.focus();
+}
+
+function clearReply() {
+  state.reply = null;
+  el.replyBar.hidden = true;
+  updatePlaceholder();
+}
+
+el.replyCancel.addEventListener('click', () => {
+  clearReply();
+  el.text.focus();
+});
+
+/** Scrolls to a message in the list (opening its day, loading older messages if needed) and highlights it. */
+async function jumpToMessage(id) {
+  for (let i = 0; i < 20 && !state.messages.some((m) => m.id === id) && state.more; i++) await loadOlder();
+  const target = state.messages.find((m) => m.id === id);
+  if (!target) {
+    toast(state.filter === 'all' ? 'That message isn’t on this computer' : 'It isn’t in this list. Try the All tab.');
+    return;
+  }
+  state.dayOpen.set(dayKey(target.createdAt), true);
+  renderList();
+  const node = el.list.querySelector(`.msg[data-id="${id}"]`);
+  if (!node) return;
+  node.scrollIntoView({ block: 'center' });
+  node.classList.add('is-flash');
+  setTimeout(() => node.classList.remove('is-flash'), 1800);
 }
 
 // ---------- GIFs ----------
@@ -904,7 +973,6 @@ function showGifError(text) {
 function clearGif() {
   if (state.gif) URL.revokeObjectURL(state.gif.url);
   state.gif = null;
-  el.gifFile.value = '';
   el.gifAttached.hidden = true;
   el.gifThumb.removeAttribute('src');
   updateSendState();
@@ -935,8 +1003,6 @@ async function attachGif(file) {
   el.text.focus();
 }
 
-el.gifBtn.addEventListener('click', () => el.gifFile.click());
-el.gifFile.addEventListener('change', () => attachGif(el.gifFile.files[0]));
 el.gifRemove.addEventListener('click', () => {
   clearGif();
   el.text.focus();
@@ -1042,8 +1108,10 @@ el.compose.addEventListener('submit', async (e) => {
       urgent: state.urgent,
       author: el.author.value,
       gif: state.gif ? { data: state.gif.data } : undefined,
+      replyTo: state.reply ? state.reply.id : undefined,
     });
     clearGif();
+    clearReply();
     el.text.value = '';
     autoGrow();
     setUrgent(false);
@@ -1334,6 +1402,7 @@ document.addEventListener('keydown', (e) => {
   if (!state.expanded) return;
   if (e.key === 'Escape') {
     if (!el.searchBox.hidden) closeSearch();
+    else if (state.reply && state.screen === 'board') clearReply();
     else if (state.screen === 'settings') showScreen(state.section);
     else if (state.settings.department) setExpanded(false);
     e.preventDefault();

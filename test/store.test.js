@@ -252,3 +252,33 @@ test('delete for me can hide many messages in one go', () => {
   assert.deepEqual(ids.map((id) => reloaded.has(id)), [true, false, true]);
   assert.equal(fs.readFileSync(reloaded.file, 'utf8').trim().split('\n').length, 4, 'one line per change');
 });
+
+test('a reply keeps the id of the message it answers and drops anything malformed', () => {
+  const original = makeMessage({ text: 'Is room 3 free?' });
+  const reply = sanitizeMessage({ ...makeMessage({ text: 'Yes' }), replyTo: original.id });
+  assert.equal(reply.replyTo, original.id);
+  for (const bad of ['bad id!', 42, null, {}, '']) {
+    const m = sanitizeMessage({ ...makeMessage({ text: 'Yes' }), replyTo: bad });
+    assert.ok(m, 'the message itself is kept');
+    assert.equal('replyTo' in m, false);
+  }
+  assert.equal('replyTo' in sanitizeMessage(makeMessage()), false);
+});
+
+test('quote() gives a short snippet, and never the text of a deleted message', () => {
+  const store = new MessageStore(tempDir()).load();
+  const long = makeMessage({ from: 'clinical', author: 'Mongi', text: `Line one\n\n  line   two ${'x'.repeat(300)}` });
+  const gifOnly = makeMessage({ text: '[GIF]', gif: { hash: 'a'.repeat(64), size: 10, w: 5, h: 5 } });
+  const gone = makeMessage({ text: 'secret' });
+  store.add([long, gifOnly, gone]);
+
+  const q = store.quote(long.id);
+  assert.equal(q.state, 'ok');
+  assert.deepEqual([q.from, q.author, q.gif], ['clinical', 'Mongi', false]);
+  assert.ok(q.text.startsWith('Line one line two xxx'), 'whitespace is flattened');
+  assert.ok(q.text.length <= 161 && q.text.endsWith('…'), 'long text is cut');
+
+  assert.deepEqual([store.quote(gifOnly.id).text, store.quote(gifOnly.id).gif], ['', true]);
+  assert.deepEqual(store.quote(gone.id, (m) => m.id === gone.id), { state: 'removed' });
+  assert.deepEqual(store.quote('not-here-0000'), { state: 'missing' });
+});
