@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('okv', {
   markRemindersSeen: () => ipcRenderer.invoke('reminders-seen'),
   listMedications: (options) => ipcRenderer.invoke('medications-list', options),
   addMedication: (request) => ipcRenderer.invoke('medication-add', request),
+  copyText: (text) => ipcRenderer.invoke('copy-text', text),
   setMedicationStatus: (change) => ipcRenderer.invoke('medication-status', change),
   clearDoneMedications: () => ipcRenderer.invoke('medications-clear-done'),
   markMedicationsSeen: () => ipcRenderer.invoke('medications-seen'),

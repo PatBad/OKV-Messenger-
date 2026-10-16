@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell, protocol, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell, protocol, dialog, clipboard } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -1091,6 +1091,13 @@ ipcMain.handle('medication-add', (_e, input = {}) => {
   if (!record) throw new Error('Request was empty or invalid');
   if (network) network.pushNow([toWire(record)], 'medications');
   return medicationView(record);
+});
+
+// Puts a patient's name on the clipboard, for pasting into the practice software.
+ipcMain.handle('copy-text', (_e, text) => {
+  if (typeof text !== 'string' || !text.trim() || text.length > LIMITS.PATIENT) throw new Error('Nothing to copy');
+  clipboard.writeText(text.trim());
+  return true;
 });
 
 ipcMain.handle('medication-status', (_e, { id, status } = {}) => setMedicationStatus(id, status));

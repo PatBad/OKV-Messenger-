@@ -2888,3 +2888,44 @@ button.med-tick:focus-visible {
   background: var(--surface-2);
   color: var(--faint);
 }
+
+.med-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.med-copy {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.med-copy svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.med-copy:hover,
+.med-copy:focus-visible {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--primary);
+}
+
+.med-copy.is-copied {
+  color: var(--primary);
+  background: var(--primary-soft);
+}

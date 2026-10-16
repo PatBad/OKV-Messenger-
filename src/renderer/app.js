@@ -2252,6 +2252,7 @@ function svgNode(tag, attrs, paths) {
 
 const SVG_TICK = '<path d="m5 12.5 4.5 4.5L19 7.5"/>';
 const SVG_CROSS = '<path d="M6 6l12 12M18 6 6 18"/>';
+const SVG_COPY = '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>';
 const SVG_PLUS = '<path d="M12 5v14M5 12h14"/>';
 
 function medicationNode(m) {
@@ -2282,7 +2283,7 @@ function medicationNode(m) {
     h(
       'div',
       { class: 'med-body' },
-      h('header', { class: 'med-head' }, h('span', { class: 'med-patient' }, m.patient)),
+      h('header', { class: 'med-head' }, h('span', { class: 'med-patient' }, m.patient), copyButton(m.patient)),
       h(
         'ul',
         { class: 'med-items' },
@@ -2291,6 +2292,35 @@ function medicationNode(m) {
       h('footer', { class: 'rem-foot' }, h('span', { class: 'rem-meta' }, meta), ...actions),
     ),
   );
+}
+
+/** A button that copies the patient's name, to paste into the practice software; shows a tick for a moment afterwards. */
+function copyButton(patient) {
+  const button = svgNode(
+    'button',
+    { type: 'button', class: 'med-copy', title: 'Copy patient name', 'aria-label': `Copy ${patient}` },
+    SVG_COPY,
+  );
+  let timer;
+  button.addEventListener('click', async () => {
+    try {
+      await okv.copyText(patient);
+    } catch {
+      toast('Couldn’t copy that');
+      return;
+    }
+    button.classList.add('is-copied');
+    button.querySelector('svg').innerHTML = SVG_TICK;
+    button.title = 'Copied';
+    toast(`Copied ${patient}`);
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      button.classList.remove('is-copied');
+      button.querySelector('svg').innerHTML = SVG_COPY;
+      button.title = 'Copy patient name';
+    }, 1500);
+  });
+  return button;
 }
 
 async function changeMedication(m, status) {
