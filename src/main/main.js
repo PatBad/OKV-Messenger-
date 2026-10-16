@@ -1093,9 +1093,11 @@ ipcMain.handle('medication-add', (_e, input = {}) => {
   return medicationView(record);
 });
 
-// Puts a patient's name on the clipboard, for pasting into the practice software.
+// Puts a patient's name, a medication line or a whole request on the clipboard, for pasting into the practice software.
+// (A request is at most a patient name plus ten medication lines.)
+const COPY_MAX = LIMITS.PATIENT + LIMITS.MAX_MEDICATIONS * (LIMITS.MEDICATION + LIMITS.QUANTITY + 8);
 ipcMain.handle('copy-text', (_e, text) => {
-  if (typeof text !== 'string' || !text.trim() || text.length > LIMITS.PATIENT) throw new Error('Nothing to copy');
+  if (typeof text !== 'string' || !text.trim() || text.length > COPY_MAX) throw new Error('Nothing to copy');
   clipboard.writeText(text.trim());
   return true;
 });

@@ -2208,6 +2208,11 @@ el.remCompose.addEventListener('submit', async (e) => {
   }
 });
 
+// Keep the waiting times on medication requests current while that list is open.
+setInterval(() => {
+  if (state.expanded && state.screen === 'medications') updateWaits();
+}, 15000);
+
 // Keep "due in…" labels and overdue highlighting current while the list is open.
 setInterval(() => {
   if (state.expanded && state.screen === 'reminders') renderReminders();
@@ -2233,6 +2238,34 @@ function renderMedications() {
   el.medClear.hidden = state.medFilter !== 'done' || !state.medicationList.length;
   list.replaceChildren(...(state.medicationList.length ? state.medicationList.map(medicationNode) : [medicationsEmpty()]));
   list.scrollTop = top;
+  updateWaits();
+}
+
+const WAIT_AMBER_MIN = 30;
+const WAIT_RED_MIN = 60;
+
+/** "<1 min", "25 min", "1 h 5 min", "2 h", "1 d 3 h": how long a request has been waiting. */
+function waitLabel(ms) {
+  const min = Math.max(0, Math.floor(ms / 60000));
+  if (min < 1) return '<1 min';
+  if (min < 60) return `${min} min`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return min % 60 ? `${hours} h ${min % 60} min` : `${hours} h`;
+  return hours % 24 ? `${Math.floor(hours / 24)} d ${hours % 24} h` : `${Math.floor(hours / 24)} d`;
+}
+
+/** Brings every open request's "waiting" time up to date in place: grey, amber after 30 minutes, red after 60. */
+function updateWaits() {
+  const now = Date.now();
+  for (const card of el.medList.querySelectorAll('.med[data-since]')) {
+    const ms = now - Number(card.dataset.since);
+    const level = ms >= WAIT_RED_MIN * 60000 ? 'red' : ms >= WAIT_AMBER_MIN * 60000 ? 'amber' : 'ok';
+    card.classList.toggle('is-wait-amber', level === 'amber');
+    card.classList.toggle('is-wait-red', level === 'red');
+    const pill = card.querySelector('.med-wait');
+    pill.textContent = waitLabel(ms);
+    pill.title = `Waiting since ${fullFmt.format(Number(card.dataset.since))}`;
+  }
 }
 
 function medicationsEmpty() {
@@ -2278,50 +2311,78 @@ function medicationNode(m) {
 
   return h(
     'article',
-    { class: ['med', !open && 'is-closed', cancelled && 'is-cancelled'] },
+    { class: ['med', !open && 'is-closed', cancelled && 'is-cancelled'], 'data-since': open ? m.createdAt : null },
     tick,
     h(
       'div',
       { class: 'med-body' },
-      h('header', { class: 'med-head' }, h('span', { class: 'med-patient' }, m.patient), copyButton(m.patient)),
+      h('header', { class: 'med-head' }, h('span', { class: 'med-patient' }, m.patient), copyButton(m.patient, 'Copy patient name', `Copied ${m.patient}`), copyAllChip(m)),
       h(
         'ul',
         { class: 'med-items' },
-        ...m.items.map((i) => h('li', null, h('span', { class: 'med-item-name' }, i.name), i.qty ? h('span', { class: 'med-item-qty' }, i.qty) : null)),
+        ...m.items.map((i) =>
+          h(
+            'li',
+            null,
+            h('span', { class: 'med-item-name' }, i.name),
+            i.qty ? h('span', { class: 'med-item-qty' }, i.qty) : null,
+            copyButton(medicationLine(i), `Copy ${i.name}`, `Copied ${i.name}`),
+          ),
+        ),
       ),
-      h('footer', { class: 'rem-foot' }, h('span', { class: 'rem-meta' }, meta), ...actions),
+      h('footer', { class: 'rem-foot' }, h('span', { class: 'rem-meta' }, meta), open ? h('span', { class: 'med-wait' }) : null, ...actions),
     ),
   );
 }
 
-/** A button that copies the patient's name, to paste into the practice software; shows a tick for a moment afterwards. */
-function copyButton(patient) {
-  const button = svgNode(
-    'button',
-    { type: 'button', class: 'med-copy', title: 'Copy patient name', 'aria-label': `Copy ${patient}` },
-    SVG_COPY,
-  );
+/** Copies text for pasting into the practice software (EzyVet). Returns whether it worked. */
+async function copyToClipboard(text, notice) {
+  try {
+    await okv.copyText(text);
+  } catch {
+    toast('Couldn’t copy that');
+    return false;
+  }
+  toast(notice);
+  return true;
+}
+
+/** A small icon button that copies `text`; it shows a tick for a moment afterwards. */
+function copyButton(text, title, notice) {
+  const button = svgNode('button', { type: 'button', class: 'med-copy', title, 'aria-label': title }, SVG_COPY);
   let timer;
   button.addEventListener('click', async () => {
-    try {
-      await okv.copyText(patient);
-    } catch {
-      toast('Couldn’t copy that');
-      return;
-    }
+    if (!(await copyToClipboard(text, notice))) return;
     button.classList.add('is-copied');
     button.querySelector('svg').innerHTML = SVG_TICK;
-    button.title = 'Copied';
-    toast(`Copied ${patient}`);
     clearTimeout(timer);
     timer = setTimeout(() => {
       button.classList.remove('is-copied');
       button.querySelector('svg').innerHTML = SVG_COPY;
-      button.title = 'Copy patient name';
     }, 1500);
   });
   return button;
 }
+
+/** "Copy all": the patient's name, then one line per medication, as tidy text (CRLF line breaks, which Windows programs expect). */
+function copyAllChip(m) {
+  const chip = h('button', { type: 'button', class: 'chip is-quiet med-copy-all', title: 'Copy the patient and all medications' }, 'Copy all');
+  let timer;
+  chip.addEventListener('click', async () => {
+    if (!(await copyToClipboard(medicationText(m), `Copied ${m.patient} and ${m.items.length === 1 ? '1 medication' : `${m.items.length} medications`}`))) return;
+    chip.textContent = 'Copied ✓';
+    chip.classList.add('is-copied');
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      chip.textContent = 'Copy all';
+      chip.classList.remove('is-copied');
+    }, 1500);
+  });
+  return chip;
+}
+
+const medicationLine = (i) => (i.qty ? `${i.name} - ${i.qty}` : i.name);
+const medicationText = (m) => [m.patient, ...m.items.map(medicationLine)].join('\r\n');
 
 async function changeMedication(m, status) {
   try {
