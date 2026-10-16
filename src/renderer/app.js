@@ -15,6 +15,8 @@ const el = {
   body: document.body,
   bubble: $('bubble'),
   badge: $('badge'),
+  badgeBlue: $('badge-blue'),
+  badgeBlueCount: $('badge-blue-count'),
   meDept: $('me-dept'),
   netStatus: $('net-status'),
   netText: $('net-text'),
@@ -113,6 +115,16 @@ const el = {
   remDueOn: $('rem-due-on'),
   remDue: $('rem-due'),
   remError: $('rem-error'),
+  badgeMedications: $('badge-medications'),
+  medications: $('screen-medications'),
+  medFilters: $('med-filters'),
+  medClear: $('med-clear'),
+  medList: $('med-list'),
+  medCompose: $('med-compose'),
+  medPatient: $('med-patient'),
+  medRows: $('med-rows'),
+  medAdd: $('med-add'),
+  medError: $('med-error'),
   toastText: $('toast-text'),
   toastAction: $('toast-action'),
 };
@@ -158,11 +170,16 @@ const state = {
   // Days the user has opened or closed (dayKey -> open). Otherwise only today is open.
   dayOpen: new Map(),
   reactionChoices: [],
-  section: 'board', // which of 'board' / 'reminders' the panel shows
+  section: 'board', // which of 'board' / 'reminders' / 'medications' / 'media' the panel shows
   remFilter: 'for-us',
   reminderList: [],
   remSummary: { open: 0, overdue: 0, unseen: 0, unseenDue: false },
   remSending: false,
+  medFilter: 'open',
+  medicationList: [],
+  medSummary: { open: 0, requests: 0, completed: 0 },
+  medRows: [{ name: '', qty: '' }], // the medicines being typed into the request form
+  medSending: false,
 };
 
 // ---------- Helpers ----------
@@ -238,11 +255,12 @@ function icon(name) {
 }
 
 let toastTimer;
-/** Shows a short notice; `action` ({label, run}) adds a button such as Undo. */
-function toast(message, action = null) {
+/** Shows a short notice; `action` ({label, run}) adds a button such as Undo, `tone` 'blue' marks a medication notification. */
+function toast(message, action = null, tone = null) {
   el.toastText.textContent = message;
   el.toastAction.hidden = !action;
   el.toast.classList.toggle('has-action', Boolean(action));
+  el.toast.classList.toggle('is-blue', tone === 'blue');
   if (action) {
     el.toastAction.textContent = action.label;
     el.toastAction.onclick = () => {
@@ -258,12 +276,13 @@ function toast(message, action = null) {
 // ---------- Sound ----------
 
 let audio;
-function chime(urgent) {
+function chime(urgent, kind = null) {
   if (!state.settings.sound) return;
   if (quietActive() && !urgent) return;
   try {
     audio = audio || new AudioContext();
-    const notes = urgent ? [988, 784, 988, 784, 988] : [659, 880];
+    // A medication request being ticked off gets its own rising three-note chime, so it's not mistaken for a message.
+    const notes = urgent ? [988, 784, 988, 784, 988] : kind === 'done' ? [523, 659, 784] : [659, 880];
     const gap = urgent ? 0.17 : 0.15;
     const start = audio.currentTime + 0.03;
     notes.forEach((freq, i) => {
@@ -405,7 +424,8 @@ el.collapse.addEventListener('click', () => setExpanded(false));
 
 function renderBadge() {
   const rem = state.remSummary;
-  const n = state.unread + rem.unseen;
+  const med = state.medSummary;
+  const n = state.unread + rem.unseen + med.requests;
   el.badge.hidden = n === 0;
   el.badge.textContent = n > 99 ? '99+' : String(n);
   el.bubble.classList.toggle('has-urgent', (state.unread > 0 && state.hasUrgentUnread) || rem.unseenDue);
@@ -414,8 +434,19 @@ function renderBadge() {
   el.badgeReminders.textContent = String(rem.open);
   el.badgeReminders.classList.toggle('is-overdue', rem.overdue > 0);
   el.badgeReminders.title = rem.overdue ? `${rem.open} open, ${rem.overdue} overdue` : `${rem.open} open`;
-  el.bubble.setAttribute('aria-label', n ? `Open OKV Messenger, ${n} new` : 'Open OKV Messenger');
-  el.bubble.title = n ? `OKV Messenger – ${n} new` : 'OKV Messenger';
+  // Medications tab: blue with the number completed since you last looked, otherwise grey with how many are still to dispense.
+  const blue = med.completed > 0;
+  const tabCount = blue ? med.completed : med.open;
+  el.badgeMedications.hidden = tabCount === 0;
+  el.badgeMedications.textContent = String(tabCount);
+  el.badgeMedications.classList.toggle('is-blue', blue);
+  el.badgeMedications.title = blue ? `${med.completed} medication request${med.completed === 1 ? '' : 's'} completed` : `${med.open} to dispense`;
+  // The blue badge on the logo is separate from the red message count.
+  el.badgeBlue.hidden = !blue;
+  el.badgeBlueCount.textContent = med.completed > 99 ? '99+' : String(med.completed);
+  const notes = [n ? `${n} new` : null, blue ? `${med.completed} medication${med.completed === 1 ? '' : 's'} completed` : null].filter(Boolean);
+  el.bubble.setAttribute('aria-label', notes.length ? `Open OKV Messenger, ${notes.join(', ')}` : 'Open OKV Messenger');
+  el.bubble.title = notes.length ? `OKV Messenger – ${notes.join(', ')}` : 'OKV Messenger';
 }
 
 function bump() {
@@ -443,11 +474,12 @@ function renderHeader() {
 
 function showScreen(name) {
   state.screen = name;
-  const section = name === 'board' || name === 'reminders' || name === 'media';
+  const section = name === 'board' || name === 'reminders' || name === 'medications' || name === 'media';
   if (section) state.section = name;
   el.onboarding.hidden = name !== 'onboarding';
   el.board.hidden = name !== 'board';
   el.reminders.hidden = name !== 'reminders';
+  el.medications.hidden = name !== 'medications';
   el.media.hidden = name !== 'media';
   el.settings.hidden = name !== 'settings';
   el.sections.hidden = !section;
@@ -462,6 +494,12 @@ function showScreen(name) {
     refreshReminders();
     if (state.expanded) okv.markRemindersSeen();
     el.remText.focus();
+  }
+  if (name === 'medications') {
+    refreshMedications();
+    if (state.expanded) okv.markMedicationsSeen();
+    renderMedRows();
+    el.medPatient.focus();
   }
 }
 
@@ -2175,6 +2213,239 @@ setInterval(() => {
   if (state.expanded && state.screen === 'reminders') renderReminders();
 }, 30000);
 
+// ---------- Medications ----------
+
+/** "Bella Smith", "Bella Smith and Rex Jones", "Bella Smith and 2 others". */
+function listNames(names) {
+  if (names.length <= 2) return names.join(' and ');
+  return `${names[0]} and ${names.length - 1} others`;
+}
+
+async function refreshMedications() {
+  if (!state.settings.department) return;
+  state.medicationList = await okv.listMedications({ view: state.medFilter });
+  renderMedications();
+}
+
+function renderMedications() {
+  const list = el.medList;
+  const top = list.scrollTop;
+  el.medClear.hidden = state.medFilter !== 'done' || !state.medicationList.length;
+  list.replaceChildren(...(state.medicationList.length ? state.medicationList.map(medicationNode) : [medicationsEmpty()]));
+  list.scrollTop = top;
+}
+
+function medicationsEmpty() {
+  const text =
+    state.medFilter === 'open'
+      ? ['Nothing waiting', 'When a client phones in for repeat medication, add it below and it appears here for the vets.']
+      : ['Nothing done yet', 'Requests that have been ticked off or cancelled appear here.'];
+  return h('div', { class: 'empty' }, h('strong', null, text[0]), text[1]);
+}
+
+/** A small icon button/mark whose drawing is trusted static SVG. */
+function svgNode(tag, attrs, paths) {
+  const t = document.createElement('template');
+  t.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+  return h(tag, attrs, t.content.firstChild);
+}
+
+const SVG_TICK = '<path d="m5 12.5 4.5 4.5L19 7.5"/>';
+const SVG_CROSS = '<path d="M6 6l12 12M18 6 6 18"/>';
+const SVG_PLUS = '<path d="M12 5v14M5 12h14"/>';
+
+function medicationNode(m) {
+  const me = state.settings.department;
+  const open = m.state === 'open';
+  const cancelled = m.state === 'cancelled';
+
+  const meta = open
+    ? `From ${deptLabel(m.from)}${m.author ? ` · ${m.author}` : ''} · ${whenLabel(m.createdAt)}`
+    : `${cancelled ? 'Cancelled' : 'Completed'} by ${deptLabel(m.closed.by)}${m.closed.name ? ` · ${m.closed.name}` : ''} · ${whenLabel(m.closed.at)}`;
+
+  const actions = [];
+  if (open && m.from === me) actions.push(h('button', { type: 'button', class: 'chip is-quiet', onclick: () => changeMedication(m, 'cancelled') }, 'Cancel'));
+  if (!open) actions.push(h('button', { type: 'button', class: 'chip is-quiet', onclick: () => changeMedication(m, 'open') }, 'Reopen'));
+
+  const tick = open
+    ? svgNode(
+        'button',
+        { type: 'button', class: 'med-tick', title: 'Tick when complete', 'aria-label': `Mark ${m.patient} as complete`, onclick: () => changeMedication(m, 'done') },
+        SVG_TICK,
+      )
+    : svgNode('span', { class: ['med-tick', 'is-checked', cancelled && 'is-cancelled'], 'aria-hidden': 'true' }, cancelled ? SVG_CROSS : SVG_TICK);
+
+  return h(
+    'article',
+    { class: ['med', !open && 'is-closed', cancelled && 'is-cancelled'] },
+    tick,
+    h(
+      'div',
+      { class: 'med-body' },
+      h('header', { class: 'med-head' }, h('span', { class: 'med-patient' }, m.patient)),
+      h(
+        'ul',
+        { class: 'med-items' },
+        ...m.items.map((i) => h('li', null, h('span', { class: 'med-item-name' }, i.name), i.qty ? h('span', { class: 'med-item-qty' }, i.qty) : null)),
+      ),
+      h('footer', { class: 'rem-foot' }, h('span', { class: 'rem-meta' }, meta), ...actions),
+    ),
+  );
+}
+
+async function changeMedication(m, status) {
+  try {
+    await okv.setMedicationStatus({ id: m.id, status });
+    // The list refreshes itself when the main process reports the change.
+    if (status !== 'open') {
+      toast(status === 'done' ? `${m.patient} marked as complete` : 'Request cancelled', {
+        label: 'Undo',
+        run: () => okv.setMedicationStatus({ id: m.id, status: 'open' }).catch(() => toast('Couldn’t undo that')),
+      });
+    }
+  } catch {
+    toast('Couldn’t update that request');
+  }
+}
+
+el.medFilters.addEventListener('click', (e) => {
+  const button = e.target.closest('button[data-medfilter]');
+  if (!button) return;
+  state.medFilter = button.dataset.medfilter;
+  for (const b of el.medFilters.querySelectorAll('button')) b.setAttribute('aria-selected', String(b === button));
+  refreshMedications();
+});
+
+el.medClear.addEventListener('click', async () => {
+  await okv.clearDoneMedications();
+  toast('Done list cleared on this computer');
+});
+
+// --- adding a request ---
+
+const MAX_MEDS = 10;
+
+/** Draws the medicine rows. The "+" sits on the last row straight after its number, so Tab goes patient → medication → number → "+". */
+function renderMedRows(focusRow = null) {
+  const rows = state.medRows;
+  el.medRows.replaceChildren(
+    ...rows.map((row, i) => {
+      const last = i === rows.length - 1;
+      const name = h('input', {
+        class: 'med-input med-name',
+        type: 'text',
+        maxlength: 80,
+        placeholder: i === 0 ? 'Medication' : `Medication ${i + 1}`,
+        'aria-label': `Medication ${i + 1}`,
+        spellcheck: 'false',
+        value: row.name,
+      });
+      const qty = h('input', {
+        class: 'med-input med-qty',
+        type: 'text',
+        maxlength: 40,
+        placeholder: 'e.g. 30 tabs',
+        'aria-label': `Number of caps, tabs, mls or tubs for medication ${i + 1}`,
+        spellcheck: 'false',
+        value: row.qty,
+      });
+      name.addEventListener('input', () => {
+        row.name = name.value;
+        onMedEdit();
+      });
+      qty.addEventListener('input', () => {
+        row.qty = qty.value;
+        onMedEdit();
+      });
+      // Enter moves along the fields; in the number field it adds the request once it's complete.
+      name.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.isComposing) {
+          e.preventDefault();
+          qty.focus();
+        }
+      });
+      qty.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.isComposing) {
+          e.preventDefault();
+          if (!el.medAdd.disabled) el.medCompose.requestSubmit();
+        }
+      });
+      const control = last
+        ? svgNode(
+            'button',
+            { type: 'button', class: 'med-step med-more', title: 'Add another medication', 'aria-label': 'Add another medication', disabled: rows.length >= MAX_MEDS, onclick: addMedRow },
+            SVG_PLUS,
+          )
+        : svgNode(
+            'button',
+            { type: 'button', class: 'med-step med-less', tabindex: '-1', title: 'Remove this medication', 'aria-label': `Remove medication ${i + 1}`, onclick: () => removeMedRow(i) },
+            SVG_CROSS,
+          );
+      return h('div', { class: 'med-row' }, name, qty, control);
+    }),
+  );
+  updateMedAddState();
+  if (focusRow !== null) el.medRows.querySelectorAll('.med-name')[focusRow].focus();
+}
+
+function addMedRow() {
+  if (state.medRows.length >= MAX_MEDS) return;
+  state.medRows.push({ name: '', qty: '' });
+  renderMedRows(state.medRows.length - 1);
+}
+
+function removeMedRow(i) {
+  state.medRows.splice(i, 1);
+  renderMedRows(Math.min(i, state.medRows.length - 1));
+}
+
+function updateMedAddState() {
+  const filled = state.medRows.some((r) => r.name.trim());
+  el.medAdd.disabled = state.medSending || !el.medPatient.value.trim() || !filled;
+}
+
+function onMedEdit() {
+  el.medError.hidden = true;
+  updateMedAddState();
+}
+
+el.medPatient.addEventListener('input', onMedEdit);
+el.medPatient.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing) {
+    e.preventDefault();
+    el.medRows.querySelector('.med-name').focus();
+  }
+});
+
+el.medCompose.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (state.medSending) return;
+  const patient = el.medPatient.value.trim();
+  const rows = state.medRows.filter((r) => r.name.trim() || r.qty.trim());
+  if (!patient || !rows.length) return;
+  if (rows.some((r) => !r.name.trim())) {
+    el.medError.textContent = 'Add the medication name for each number you typed.';
+    el.medError.hidden = false;
+    return;
+  }
+  state.medSending = true;
+  updateMedAddState();
+  try {
+    await okv.addMedication({ patient, items: rows.map((r) => ({ name: r.name.trim(), qty: r.qty.trim() })) });
+    el.medPatient.value = '';
+    state.medRows = [{ name: '', qty: '' }];
+    renderMedRows();
+    if (state.medFilter !== 'open') toast(`Request added for ${patient}`);
+  } catch {
+    el.medError.textContent = 'Request not added. Please try again.';
+    el.medError.hidden = false;
+  } finally {
+    state.medSending = false;
+    updateMedAddState();
+    el.medPatient.focus();
+  }
+});
+
 // ---------- Settings ----------
 
 function renderSettings() {
@@ -2281,10 +2552,11 @@ okv.onFileReady(() => {
   if (state.screen === 'media') refreshMedia();
 });
 
-okv.onUnread(({ count, urgent, reminders }) => {
+okv.onUnread(({ count, urgent, reminders, medications }) => {
   state.unread = count;
   state.hasUrgentUnread = urgent;
   state.remSummary = reminders;
+  state.medSummary = medications;
   renderBadge();
 });
 
@@ -2297,6 +2569,24 @@ okv.onRemindersChanged(({ alert }) => {
   if (state.screen === 'reminders') {
     refreshReminders();
     if (state.expanded) okv.markRemindersSeen();
+  }
+});
+
+// A medication request was logged, ticked off or changed, here or on another computer.
+okv.onMedicationsChanged(({ alert, done = [], requests = [] }) => {
+  if (alert === 'done') {
+    // The blue notification: a request this department logged has been completed.
+    chime(false, 'done');
+    if (!state.expanded) bump();
+    else if (state.screen !== 'medications') toast(`✓ ${listNames(done)} – medication completed`, null, 'blue');
+  } else if (alert) {
+    chime(false);
+    if (!state.expanded) bump();
+    else if (state.screen !== 'medications') toast(`New medication request: ${listNames(requests)}`);
+  }
+  if (state.screen === 'medications') {
+    refreshMedications();
+    if (state.expanded) okv.markMedicationsSeen();
   }
 });
 
@@ -2336,6 +2626,7 @@ async function init() {
     unread: s.unread.count,
     hasUrgentUnread: s.unread.urgent,
     remSummary: s.unread.reminders,
+    medSummary: s.unread.medications,
     peers: s.peers,
     update: s.update,
     newSince: s.lastReadAt,

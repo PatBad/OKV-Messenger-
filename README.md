@@ -36,6 +36,8 @@ There is no server and no internet requirement. Every computer keeps its own com
 | Search | Magnifying glass, or **Ctrl+F** |
 | Set a reminder for someone | Switch to **Reminders**, pick their department, type their name (names used before are suggested), write the reminder and optionally tick **Due** to set a time. It stays until it’s dealt with |
 | Deal with a reminder | Reminders for your department appear under **For us** (the tab shows how many are open, red if any are overdue). When one falls due, that department’s computers chime and the logo pulses. Click **✓ Done** when it’s handled; the department that sent it can **Cancel** it instead. Closed reminders move to **Done**, which you can clear on your own computer |
+| Log a repeat script request | A client phones in for chronic medication: switch to **Medications**, type the patient's name and surname, then the medication and the number of caps / tabs / mls / tubs. **Tab** moves along the boxes; press **+** (it's the next stop after the number) for a second medication, and **Enter** in the number box adds the request. The vets' computers chime and show it under **To dispense**, longest-waiting first |
+| Tick a request off | Click the circle beside it when the medication is ready. The request moves to **Done** (with **Undo** for a few seconds), and every computer in the department that logged it gets a **blue ✓ badge** on the logo (and a blue number on the Medications tab) plus a rising chime. Opening **Medications** clears it. The department that logged a request can **Cancel** it instead; **Reopen** puts a finished one back. Done requests stay listed for 14 days, and **Clear done** tidies the list on your own computer |
 | Settings / Quit | Gear icon in the board, or right-click the OKV icon in the Windows system tray. Settings also shows which computers are on the network (with their versions, and when offline ones were last seen), and lets you save messages as a spreadsheet or back everything up |
 
 The first time it runs, the app asks which department the computer belongs to. You can change this later in Settings.
@@ -56,7 +58,7 @@ The installer puts the app in the current Windows user's profile, so future upda
 - A computer that was switched off catches up automatically the next time it starts, as long as any other computer that has the messages is on.
 - Messages are only accepted from private network addresses (192.168.x.x, 10.x.x.x, 172.16–31.x.x).
 
-"Delete for everyone", reactions, reminders, edits, "seen" receipts and pinned notices travel between computers the same way messages do, so a computer that was off catches up when it starts.
+"Delete for everyone", reactions, reminders, medication requests, edits, "seen" receipts and pinned notices travel between computers the same way messages do, so a computer that was off catches up when it starts.
 
 A GIF is stored once on each PC in `history\gifs\`, named by a fingerprint of its contents; the message only carries that fingerprint, and each PC fetches any GIF it is missing directly from another PC on the clinic network. (On PCs still on an older version, a GIF message shows as "[GIF]".)
 
@@ -132,7 +134,7 @@ The development-only variable `OKV_TEST_PICK` (a folder path) makes the export, 
 
 ```
 src/main/main.js       Window (expand/collapse, drag, always on top), tray, IPC
-src/main/store.js      History on disk (messages, deletions, reactions, reminders) + validation + sync fingerprints
+src/main/store.js      History on disk (messages, deletions, reactions, reminders, medication requests) + validation + sync fingerprints
 src/main/network.js    Peer discovery (UDP) and sync (HTTP) between computers
 src/main/gifs.js      GIF files kept on this PC: checking, storing by fingerprint
 src/main/geometry.js   Window-resizing maths

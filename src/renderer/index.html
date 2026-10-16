@@ -14,6 +14,11 @@
     <button id="bubble" class="bubble" type="button" aria-label="Open OKV Messenger">
       <img src="../../assets/logo.svg" alt="" draggable="false" />
       <span id="badge" class="badge" hidden></span>
+      <!-- Blue: a medication request your team logged has been ticked off -->
+      <span id="badge-blue" class="badge badge-blue" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+        <span id="badge-blue-count"></span>
+      </span>
     </button>
 
     <!-- Expanded: the message board -->
@@ -48,6 +53,10 @@
         </button>
         <button type="button" role="tab" data-section="reminders">
           Reminders <span id="badge-reminders" class="sec-badge" hidden></span>
+        </button>
+        <button type="button" role="tab" data-section="medications">
+          <span class="tab-long">Medications</span><span class="tab-short">Meds</span>
+          <span id="badge-medications" class="sec-badge" hidden></span>
         </button>
         <button type="button" role="tab" data-section="media">Media</button>
       </nav>
@@ -200,6 +209,28 @@
             <input id="rem-due" class="rem-due-input" type="datetime-local" aria-label="Due date and time" hidden />
           </div>
           <p id="rem-error" class="compose-error" role="alert" hidden></p>
+        </form>
+      </div>
+
+      <!-- Medications: clients phoning in for repeat scripts / chronic medication -->
+      <div id="screen-medications" class="screen medications" hidden>
+        <div class="toolbar">
+          <div id="med-filters" class="filters" role="tablist" aria-label="Show medication requests">
+            <button type="button" role="tab" data-medfilter="open" aria-selected="true">To dispense</button>
+            <button type="button" role="tab" data-medfilter="done" aria-selected="false">Done</button>
+          </div>
+          <button id="med-clear" class="link-btn rem-clear" type="button" hidden>Clear done</button>
+        </div>
+        <div class="list-wrap">
+          <div id="med-list" class="list" tabindex="-1" aria-live="polite"></div>
+        </div>
+        <form id="med-compose" class="compose med-compose" autocomplete="off">
+          <input id="med-patient" class="med-input" type="text" maxlength="80" placeholder="Patient name &amp; surname" aria-label="Patient name and surname" spellcheck="false" />
+          <div id="med-rows" class="med-rows"></div>
+          <div class="med-actions">
+            <p id="med-error" class="compose-error" role="alert" hidden></p>
+            <button id="med-add" class="chip is-done med-submit" type="submit" disabled>Add request</button>
+          </div>
         </form>
       </div>
 

@@ -180,6 +180,56 @@ function sanitizeReminderRecord(r) {
   return null;
 }
 
+const MEDICATION_STATUSES = ['done', 'cancelled', 'open'];
+
+/** The medicines on a request: [{ name, qty }], name required, qty free text ("30 tabs"). Null if any entry is bad. */
+function sanitizeMedicationItems(items) {
+  if (!Array.isArray(items) || !items.length || items.length > LIMITS.MAX_MEDICATIONS) return null;
+  const clean = [];
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || typeof item.name !== 'string') return null;
+    const qty = item.qty ?? '';
+    if (typeof qty !== 'string') return null;
+    const name = item.name.trim();
+    if (!name || name.length > LIMITS.MEDICATION || qty.trim().length > LIMITS.QUANTITY) return null;
+    clean.push({ name, qty: qty.trim() });
+  }
+  return clean;
+}
+
+/**
+ * The medications collection holds two kinds of record:
+ *  - type 'med': a client's request for repeat / chronic medication, logged by one department
+ *  - type 'status': ticking it off as done, cancelling it, or opening it again (undo)
+ */
+function sanitizeMedicationRecord(r) {
+  if (!r || typeof r !== 'object' || !validId(r.id)) return null;
+  const host = r.host ?? '';
+  if (!validHost(host) || !validTime(r.createdAt)) return null;
+  const createdAt = Math.floor(r.createdAt);
+
+  if (r.type === 'med') {
+    const author = r.author ?? '';
+    if (!DEPARTMENT_IDS.includes(r.from)) return null;
+    if (typeof author !== 'string' || author.length > LIMITS.AUTHOR) return null;
+    if (typeof r.patient !== 'string') return null;
+    const patient = r.patient.trim();
+    if (!patient || patient.length > LIMITS.PATIENT) return null;
+    const items = sanitizeMedicationItems(r.items);
+    if (!items) return null;
+    return { v: 1, type: 'med', id: r.id, from: r.from, patient, items, author: author.trim(), host, createdAt };
+  }
+
+  if (r.type === 'status') {
+    const byName = r.byName ?? '';
+    if (!validId(r.target) || !MEDICATION_STATUSES.includes(r.status)) return null;
+    if (!DEPARTMENT_IDS.includes(r.by)) return null;
+    if (typeof byName !== 'string' || byName.length > LIMITS.AUTHOR) return null;
+    return { v: 1, type: 'status', id: r.id, target: r.target, status: r.status, by: r.by, byName: byName.trim(), host, createdAt };
+  }
+  return null;
+}
+
 /** A correction to a message's text, made by the department that sent it (honoured only within EDIT_WINDOW_MS). */
 function sanitizeEdit(r) {
   if (!r || typeof r !== 'object') return null;
@@ -685,6 +735,48 @@ class ReminderLog extends RecordLog {
   }
 }
 
+/** Medication requests and their done/cancelled/reopened history, shared between computers. */
+class MedicationLog extends RecordLog {
+  constructor(dir) {
+    super(dir, 'medications.jsonl', sanitizeMedicationRecord);
+    this.meds = new Map();
+    this.statuses = new Map();
+  }
+
+  _reset() {
+    this.meds = new Map();
+    this.statuses = new Map();
+  }
+
+  _track(record) {
+    if (record.type === 'med') {
+      this.meds.set(record.id, record);
+      return;
+    }
+    const list = this.statuses.get(record.target);
+    if (list) list.push(record);
+    else this.statuses.set(record.target, [record]);
+  }
+
+  all() {
+    return [...this.meds.values()];
+  }
+
+  /**
+   * The request's current state: the latest status record that was allowed, or null if it's still open.
+   * Any department can tick a request off (the vets do the dispensing) or open it again; only the
+   * department that logged it can cancel it.
+   */
+  status(med) {
+    let latest = null;
+    for (const s of this.statuses.get(med.id) || []) {
+      const allowed = s.status !== 'cancelled' || s.by === med.from;
+      if (allowed && (!latest || compareRecords(s, latest) > 0)) latest = s;
+    }
+    return latest && latest.status !== 'open' ? latest : null;
+  }
+}
+
 /** Corrections to message text, shared between computers. */
 class EditLog extends RecordLog {
   constructor(dir) {
@@ -828,6 +920,7 @@ module.exports = {
   DeletionLog,
   ReactionLog,
   ReminderLog,
+  MedicationLog,
   EditLog,
   ReceiptLog,
   PinLog,
@@ -838,6 +931,7 @@ module.exports = {
   sanitizeDeletion,
   sanitizeReaction,
   sanitizeReminderRecord,
+  sanitizeMedicationRecord,
   sanitizeEdit,
   sanitizeReceipt,
   sanitizePin,

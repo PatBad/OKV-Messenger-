@@ -57,9 +57,17 @@ const NETWORK = {
   CHUNK: 500,
 };
 
+// Medication requests (clients phoning in for repeat scripts / chronic medication). Reception logs them;
+// the department below is alerted when a new one arrives, and whoever ticks one off notifies the department that logged it.
+const MEDICATION_ALERT_DEPT = 'clinical';
+
 const LIMITS = {
   TEXT: 4000,
   REMINDER: 1000,
+  PATIENT: 80,
+  MEDICATION: 80,
+  QUANTITY: 40,
+  MAX_MEDICATIONS: 10,
   PIN: 300,
   // Largest GIF that can be sent (computers keep every GIF that's sent). GIPHY's search results are often
   // 4-6 MB, so this matches the limit for attached files.
@@ -88,6 +96,7 @@ module.exports = {
   EDIT_WINDOW_MS,
   DEFAULT_QUICK_MESSAGES,
   MAX_QUICK_MESSAGES,
+  MEDICATION_ALERT_DEPT,
   NETWORK,
   LIMITS,
 };

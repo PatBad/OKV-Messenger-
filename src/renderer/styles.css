@@ -2590,3 +2590,301 @@ button.msg-quote:hover {
   object-fit: contain;
   border-radius: 6px;
 }
+
+/* ---------- Medications ---------- */
+
+/* Blue is only ever used for "a medication request your team logged has been completed",
+   so it can't be mistaken for the red message count. */
+:root {
+  --notify: #2563eb;
+  --notify-soft: #e8effe;
+  --notify-border: #bcd0fb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --notify: #4c8dff;
+    --notify-soft: #172338;
+    --notify-border: #29467a;
+  }
+}
+
+.badge-blue {
+  top: -3px;
+  right: auto;
+  left: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 6px 0 4px;
+  background: #2563eb;
+}
+
+.badge-blue svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tab-short {
+  display: none;
+}
+
+/* Four tabs need to fit in the narrowest board. */
+@media (max-width: 400px) {
+  .sections {
+    gap: 0;
+  }
+
+  .sections button {
+    padding-left: 9px;
+    padding-right: 9px;
+    gap: 5px;
+  }
+}
+
+/* ...and in the very narrowest, "Medications" shortens to "Meds". */
+@media (max-width: 379px) {
+  .tab-long {
+    display: none;
+  }
+
+  .tab-short {
+    display: inline;
+  }
+}
+
+.sec-badge.is-blue {
+  background: var(--notify);
+  color: #fff;
+}
+
+.toast.is-blue {
+  background: var(--notify);
+  color: #fff;
+}
+
+.med {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 6px;
+  padding: 9px 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.med.is-closed {
+  opacity: 0.8;
+}
+
+.med-tick {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  padding: 0;
+  border: 2px solid var(--faint);
+  border-radius: 50%;
+  background: transparent;
+  color: transparent;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.med-tick svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+button.med-tick:hover,
+button.med-tick:focus-visible {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.med-tick.is-checked {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.med-tick.is-cancelled {
+  border-color: var(--faint);
+  background: var(--faint);
+}
+
+.med-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.med-patient {
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.med-items {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.med-items li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  border-top: 1px dashed var(--border);
+  font-size: 13.5px;
+  line-height: 1.35;
+}
+
+.med-items li:first-child {
+  border-top: none;
+}
+
+.med-item-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.med-item-qty {
+  flex: none;
+  color: var(--primary);
+  font-weight: 650;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.med.is-closed .med-items {
+  text-decoration: line-through;
+  text-decoration-color: var(--faint);
+}
+
+.med.is-closed .med-item-qty {
+  color: var(--muted);
+}
+
+.med-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.med-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 148px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.med-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.med-input {
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 13.5px;
+  outline: none;
+  user-select: text;
+  min-width: 0;
+}
+
+.med-input:focus {
+  border-color: var(--primary);
+  background: var(--bg);
+}
+
+.med-name {
+  flex: 1;
+}
+
+.med-qty {
+  flex: none;
+  width: 112px;
+}
+
+.med-step {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.med-step svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.med-step:hover:not(:disabled),
+.med-step:focus-visible {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.med-step:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.med-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.med-actions .compose-error {
+  flex: 1;
+  margin: 0;
+}
+
+.med-submit {
+  height: 32px;
+  padding: 0 16px;
+  font-size: 13px;
+}
+
+.med-submit:disabled {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--faint);
+}

@@ -16,6 +16,7 @@ const {
   EDIT_WINDOW_MS,
   DEFAULT_QUICK_MESSAGES,
   MAX_QUICK_MESSAGES,
+  MEDICATION_ALERT_DEPT,
   LIMITS,
 } = require('./constants');
 const { Config } = require('./config');
@@ -24,6 +25,7 @@ const {
   DeletionLog,
   ReactionLog,
   ReminderLog,
+  MedicationLog,
   EditLog,
   ReceiptLog,
   PinLog,
@@ -79,10 +81,12 @@ let gifs; // GIF files, named by fingerprint
 let files; // attached files and images, named by fingerprint
 let reactions; // emoji reactions, shared with the other computers
 let reminders; // reminders and their done/cancelled history, shared
+let medications; // repeat-medication requests and their done/cancelled history, shared
 let edits; // corrections to message text, shared
 let receipts; // which departments have seen which messages, shared
 let pins; // the notice pinned at the top of the board, shared
 let reminderHides; // done reminders cleared from this computer's Done list
+let medicationHides; // done medication requests cleared from this computer's Done list
 let dueCheckedUntil = Date.now(); // reminders due before this have already chimed
 let network = null;
 let updater = null;
@@ -144,6 +148,7 @@ async function start() {
   }
   reactions = new ReactionLog(historyDir).load();
   reminders = new ReminderLog(historyDir).load();
+  medications = new MedicationLog(historyDir).load();
   edits = new EditLog(historyDir).load();
   receipts = new ReceiptLog(historyDir).load();
   pins = new PinLog(historyDir).load();
@@ -152,11 +157,13 @@ async function start() {
   tidyUp();
   setInterval(tidyUp, 6 * 3600 * 1000);
   reminderHides = new LocalHides(historyDir, 'hidden-reminders.jsonl').load();
+  medicationHides = new LocalHides(historyDir, 'hidden-medications.jsonl').load();
   log.info(`loaded ${store.count} messages, ${deletions.count} deletions`);
   store.on('added', onMessagesAdded);
   deletions.on('added', onMessagesChanged);
   reactions.on('added', onMessagesChanged);
   reminders.on('added', onRemindersAdded);
+  medications.on('added', onMedicationsAdded);
   edits.on('added', onMessagesChanged);
   receipts.on('added', (added) => {
     if (added.some((r) => !r.local)) onMessagesChanged(); // someone else has seen a message
@@ -178,6 +185,7 @@ async function start() {
     deletions,
     reactions,
     reminders,
+    medications,
     edits,
     receipts,
     pins,
@@ -400,7 +408,7 @@ function refreshTray() {
   const dept = DEPARTMENTS.find((d) => d.id === config.get('department'));
   const update = updater ? updater.status : { state: 'dev' };
   const summary = unread();
-  const unreadNow = summary.count + summary.reminders.unseen;
+  const unreadNow = summary.count + summary.reminders.unseen + summary.medications.requests + summary.medications.completed;
   tray.setToolTip(unreadNow ? `OKV Messenger – ${unreadNow} new` : 'OKV Messenger');
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -447,11 +455,16 @@ function unreadContext() {
   };
 }
 
-/** Unread messages plus reminders needing attention, for the badge, pulse and tabs. */
+/** Unread messages plus reminders and medication requests needing attention, for the badges, pulse and tabs. */
 function unread() {
-  const empty = { count: 0, urgent: false, reminders: { open: 0, overdue: 0, unseen: 0, unseenDue: false } };
+  const empty = {
+    count: 0,
+    urgent: false,
+    reminders: { open: 0, overdue: 0, unseen: 0, unseenDue: false },
+    medications: { open: 0, requests: 0, completed: 0 },
+  };
   if (!store || !config.get('department')) return empty;
-  return { ...store.unread({ ...unreadContext(), exclude: isRemoved }), reminders: reminderSummary() };
+  return { ...store.unread({ ...unreadContext(), exclude: isRemoved }), reminders: reminderSummary(), medications: medicationSummary() };
 }
 
 function sendUnread() {
@@ -684,6 +697,85 @@ function setReminderStatus(id, status) {
     { local: true },
   );
   if (record && network) network.pushNow([toWire(record)], 'reminders');
+}
+
+// ---------- Medication requests ----------
+
+/** A request as the page sees it, with its current state worked out. */
+function medicationView(m) {
+  const s = medications.status(m);
+  return {
+    ...toWire(m),
+    local: Boolean(m.local),
+    state: s ? s.status : 'open',
+    closed: s ? { by: s.by, name: s.byName, at: s.createdAt } : null,
+  };
+}
+
+/**
+ * For the badges and tab. `open` is every unfinished request. `requests` is new ones the alert department hasn't
+ * looked at yet. `completed` is requests this department logged that someone else has ticked off since it last looked
+ * (the blue notification).
+ */
+function medicationSummary() {
+  const department = config.get('department');
+  const seenAt = config.get('medicationsSeenAt') || 0;
+  const since = config.get('firstRunAt');
+  let open = 0;
+  let requests = 0;
+  let completed = 0;
+  for (const m of medications.all()) {
+    const s = medications.status(m);
+    if (!s) {
+      open++;
+      if (department === MEDICATION_ALERT_DEPT && !m.local && m.receivedAt > seenAt && m.createdAt >= since) requests++;
+    } else if (s.status === 'done' && m.from === department && !s.local && s.receivedAt > seenAt && s.createdAt >= since) {
+      completed++;
+    }
+  }
+  return { open, requests, completed };
+}
+
+function onMedicationsAdded(added) {
+  const department = config.get('department');
+  const since = config.get('firstRunAt');
+  const requests = added.filter((r) => r.type === 'med' && !r.local && department === MEDICATION_ALERT_DEPT && r.createdAt >= since);
+  const done = added
+    .filter((r) => r.type === 'status' && r.status === 'done' && !r.local && r.createdAt >= since)
+    .map((r) => medications.meds.get(r.target))
+    .filter((m) => m && m.from === department && medications.status(m) && medications.status(m).status === 'done');
+  send('medications-changed', {
+    alert: done.length ? 'done' : requests.length ? 'normal' : null,
+    done: done.map((m) => m.patient),
+    requests: requests.map((m) => m.patient),
+  });
+  sendUnread();
+}
+
+/** Adds a status record (done / cancelled / open again) after checking this department may make it. */
+function setMedicationStatus(id, status) {
+  const m = typeof id === 'string' ? medications.meds.get(id) : null;
+  if (!m) throw new Error('Request not found');
+  const department = config.get('department');
+  if (!department) throw new Error('Choose a department first');
+  if (status === 'cancelled' && department !== m.from) throw new Error('Only the department that logged it can cancel it');
+  const [record] = medications.add(
+    [
+      {
+        type: 'status',
+        id: crypto.randomUUID(),
+        target: id,
+        status,
+        by: department,
+        byName: config.get('author') || '',
+        host: HOST,
+        createdAt: Date.now(),
+      },
+    ],
+    { local: true },
+  );
+  if (!record) throw new Error('Unknown status');
+  if (network) network.pushNow([toWire(record)], 'medications');
 }
 
 function onMessagesChanged() {
@@ -962,6 +1054,59 @@ ipcMain.handle('reminder-names', (_e, department) => {
 
 ipcMain.handle('reminders-seen', () => {
   config.set({ remindersSeenAt: Date.now() });
+  sendUnread();
+});
+
+ipcMain.handle('medications-list', (_e, { view } = {}) => {
+  const items = medications
+    .all()
+    .filter((m) => !medicationHides.has(m.id))
+    .map(medicationView);
+  if (view === 'done') {
+    const from = Date.now() - RETENTION_DAYS * 86400000; // finished requests are listed for as long as messages are kept
+    return items.filter((m) => m.state !== 'open' && m.closed.at >= from).sort((a, b) => b.closed.at - a.closed.at);
+  }
+  // Oldest first, so the longest-waiting request is at the top.
+  return items.filter((m) => m.state === 'open').sort((a, b) => a.createdAt - b.createdAt);
+});
+
+ipcMain.handle('medication-add', (_e, input = {}) => {
+  const department = config.get('department');
+  if (!department) throw new Error('Choose a department first');
+  const [record] = medications.add(
+    [
+      {
+        type: 'med',
+        id: crypto.randomUUID(),
+        from: department,
+        patient: input.patient,
+        items: input.items,
+        author: config.get('author') || '',
+        host: HOST,
+        createdAt: Date.now(),
+      },
+    ],
+    { local: true },
+  );
+  if (!record) throw new Error('Request was empty or invalid');
+  if (network) network.pushNow([toWire(record)], 'medications');
+  return medicationView(record);
+});
+
+ipcMain.handle('medication-status', (_e, { id, status } = {}) => setMedicationStatus(id, status));
+
+// Clears finished requests from this computer's Done list (they stay in the history file).
+ipcMain.handle('medications-clear-done', () => {
+  const ids = medications
+    .all()
+    .filter((m) => medications.status(m))
+    .map((m) => m.id);
+  if (medicationHides.setMany(ids, true)) send('medications-changed', { alert: null });
+});
+
+// The Medications tab has been looked at: clears the "new request" and blue "completed" notifications.
+ipcMain.handle('medications-seen', () => {
+  config.set({ medicationsSeenAt: Date.now() });
   sendUnread();
 });
 
