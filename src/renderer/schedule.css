@@ -1,0 +1,666 @@
+/* The appointment schedule window. Uses the colour tokens from styles.css and brand.css. */
+
+:root {
+  --sch-line: rgba(120, 140, 140, 0.22);
+  --sch-hour: rgba(120, 140, 140, 0.45);
+  --sch-now: #e11d48;
+  --sch-gutter: 58px;
+
+  --c-green-bg: #d9f2e3;
+  --c-green-line: #5fb985;
+  --c-green-fg: #0f3d24;
+  --c-blue-bg: #dbeafe;
+  --c-blue-line: #7aa6ee;
+  --c-blue-fg: #12306b;
+  --c-pink-bg: #fce1ee;
+  --c-pink-line: #ea7fb1;
+  --c-pink-fg: #6b1240;
+  --c-yellow-bg: #fdf1c4;
+  --c-yellow-line: #dcb531;
+  --c-yellow-fg: #4d3b00;
+  --c-grey-bg: #e6e8ea;
+  --c-grey-line: #9ea5ab;
+  --c-grey-fg: #2a2f33;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sch-line: rgba(160, 180, 180, 0.16);
+    --sch-hour: rgba(160, 180, 180, 0.34);
+    --sch-now: #fb7185;
+
+    --c-green-bg: #1d4a33;
+    --c-green-line: #3f9d6b;
+    --c-green-fg: #d4f5e2;
+    --c-blue-bg: #1e3a6e;
+    --c-blue-line: #4b7fd1;
+    --c-blue-fg: #dce8ff;
+    --c-pink-bg: #5a1d3f;
+    --c-pink-line: #c4619a;
+    --c-pink-fg: #ffe0ef;
+    --c-yellow-bg: #5a4710;
+    --c-yellow-line: #b8952a;
+    --c-yellow-fg: #fff1c2;
+    --c-grey-bg: #3a4046;
+    --c-grey-line: #7a838b;
+    --c-grey-fg: #eceff1;
+  }
+}
+
+html,
+body.sch {
+  background: var(--bg);
+  overflow: hidden;
+  user-select: none;
+}
+
+body.sch {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  font-size: 13px;
+}
+
+/* ---------- Top bar ---------- */
+
+.sch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 18px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex: none;
+}
+
+.sch-nav,
+.sch-tools,
+.sch-rows {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sch-day {
+  margin: 0 6px 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+  min-width: 150px;
+}
+
+.sch-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sch-btn:hover {
+  background: var(--surface-2);
+}
+
+.sch-btn.sch-icon {
+  width: 30px;
+  padding: 0;
+}
+
+.sch-btn.sch-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+.sch-btn.sch-primary:hover {
+  background: var(--primary-hover);
+}
+
+.sch-btn.sch-danger {
+  color: var(--urgent);
+  border-color: var(--urgent-border);
+  background: var(--urgent-soft);
+}
+
+.sch-date {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color-scheme: light dark;
+}
+
+.sch-rows-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sch-seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sch-seg button {
+  min-width: 36px;
+  height: 28px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  font-weight: 600;
+}
+
+.sch-seg button:last-child {
+  border-right: none;
+}
+
+.sch-seg button:hover {
+  background: var(--surface-2);
+}
+
+.sch-seg button[aria-pressed='true'] {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.sch-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* ---------- Grid ---------- */
+
+.sch-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+
+.sch-grid {
+  display: grid;
+  grid-template-columns: var(--sch-gutter) repeat(var(--cols), minmax(150px, 1fr));
+  grid-template-rows: 36px auto;
+  min-width: min-content;
+}
+
+.sch-corner,
+.sch-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-weight: 700;
+}
+
+.sch-head {
+  border-left: 1px solid var(--border);
+}
+
+.sch-corner {
+  left: 0;
+  z-index: 6;
+}
+
+.sch-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+
+.sch-time {
+  position: absolute;
+  right: 6px;
+  left: 0;
+  padding-top: 2px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.sch-time.is-hour {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.sch-col {
+  position: relative;
+  border-left: 1px solid var(--border);
+  cursor: cell;
+  background-image: linear-gradient(to bottom, var(--sch-hour) 1px, transparent 1px), linear-gradient(to bottom, var(--sch-line) 1px, transparent 1px);
+  background-size: 100% var(--hour), 100% var(--row);
+  background-position: 0 var(--hour-offset), 0 0;
+}
+
+.sch-col.is-closed::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sch-shade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(120, 130, 130, 0.1);
+  pointer-events: none;
+}
+
+.sch-now {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 2px solid var(--sch-now);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.sch-now::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: -5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sch-now);
+}
+
+/* ---------- Appointment blocks ---------- */
+
+.sch-appt {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--bg-c);
+  color: var(--fg);
+  cursor: grab;
+  line-height: 1.25;
+  touch-action: none;
+}
+
+.sch-appt:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.sch-appt.c-green { --bg-c: var(--c-green-bg); --line: var(--c-green-line); --fg: var(--c-green-fg); }
+.sch-appt.c-blue { --bg-c: var(--c-blue-bg); --line: var(--c-blue-line); --fg: var(--c-blue-fg); }
+.sch-appt.c-pink { --bg-c: var(--c-pink-bg); --line: var(--c-pink-line); --fg: var(--c-pink-fg); }
+.sch-appt.c-yellow { --bg-c: var(--c-yellow-bg); --line: var(--c-yellow-line); --fg: var(--c-yellow-fg); }
+.sch-appt.c-grey { --bg-c: var(--c-grey-bg); --line: var(--c-grey-line); --fg: var(--c-grey-fg); }
+
+.sch-appt.is-dragging {
+  z-index: 6;
+  cursor: grabbing;
+  box-shadow: var(--shadow);
+  opacity: 0.92;
+}
+
+.sch-appt.is-bad,
+.sch-ghost.is-bad {
+  outline: 2px solid var(--urgent);
+  background-image: repeating-linear-gradient(45deg, rgba(200, 30, 30, 0.18) 0 6px, transparent 6px 12px);
+}
+
+.sch-appt-time {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sch-appt-who {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sch-appt-who span {
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.sch-appt-notes {
+  margin-top: 1px;
+  font-size: 12px;
+  opacity: 0.9;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+/* Two appointments sharing a slot (booked on two PCs at the same moment): a warning mark on both. */
+.sch-appt.is-double::after {
+  content: '!';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--urgent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+/* Short blocks put everything on one line. */
+.sch-appt.is-short {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.sch-appt.is-short .sch-appt-notes {
+  display: none;
+}
+
+.sch-appt.is-tiny {
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 11px;
+}
+
+.sch-appt.is-tiny .sch-appt-time {
+  display: none;
+}
+
+.sch-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 7px;
+  cursor: ns-resize;
+}
+
+.sch-handle.top {
+  top: 0;
+}
+
+.sch-handle.bottom {
+  bottom: 0;
+}
+
+.sch-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 22px;
+  height: 3px;
+  margin-left: -11px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0;
+}
+
+.sch-handle.top::after {
+  top: 2px;
+}
+
+.sch-handle.bottom::after {
+  bottom: 2px;
+}
+
+.sch-appt:hover .sch-handle::after {
+  opacity: 0.4;
+}
+
+.sch-ghost {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  z-index: 4;
+  border: 2px dashed var(--primary);
+  border-radius: 6px;
+  background: var(--primary-soft);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* ---------- Booking form ---------- */
+
+.sch-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(8, 20, 20, 0.45);
+}
+
+.sch-dialog {
+  width: min(460px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  user-select: text;
+}
+
+.sch-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.sch-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0 0 10px;
+  padding: 0;
+  border: none;
+  flex: 1;
+}
+
+.sch-field > span,
+.sch-field > legend {
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.sch-field em {
+  font-weight: 400;
+  font-style: normal;
+  opacity: 0.8;
+}
+
+.sch-field input,
+.sch-field select,
+.sch-field textarea {
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color-scheme: light dark;
+}
+
+.sch-field textarea {
+  resize: vertical;
+}
+
+.sch-field input:focus,
+.sch-field select:focus,
+.sch-field textarea:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: -1px;
+}
+
+.sch-row {
+  display: flex;
+  gap: 10px;
+}
+
+.sch-length strong {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sch-swatches {
+  display: flex;
+  gap: 8px;
+}
+
+.sch-swatch {
+  position: relative;
+  width: 34px;
+  height: 28px;
+}
+
+.sch-swatch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.sch-swatch span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 2px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-c);
+  pointer-events: none;
+}
+
+.sch-swatch.c-green { --bg-c: var(--c-green-bg); --line: var(--c-green-line); }
+.sch-swatch.c-blue { --bg-c: var(--c-blue-bg); --line: var(--c-blue-line); }
+.sch-swatch.c-pink { --bg-c: var(--c-pink-bg); --line: var(--c-pink-line); }
+.sch-swatch.c-yellow { --bg-c: var(--c-yellow-bg); --line: var(--c-yellow-line); }
+.sch-swatch.c-grey { --bg-c: var(--c-grey-bg); --line: var(--c-grey-line); }
+
+.sch-swatch input:checked + span {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.sch-swatch input:focus-visible + span {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.sch-error {
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--urgent-border);
+  border-radius: 8px;
+  background: var(--urgent-soft);
+  color: var(--urgent);
+  font-weight: 600;
+}
+
+.sch-meta {
+  margin: 0 0 10px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.sch-meta:empty {
+  display: none;
+}
+
+.sch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sch-spacer {
+  flex: 1;
+}
+
+/* ---------- Tooltip while dragging, and toast ---------- */
+
+.sch-tip {
+  position: fixed;
+  z-index: 30;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.sch-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: calc(100% - 32px);
+  padding: 9px 14px;
+  border-radius: 8px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 12.5px;
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+}
+
+.sch-toast-action {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--primary-soft);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

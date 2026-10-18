@@ -53,6 +53,23 @@ const NETWORK = {
 // the department below is alerted when a new one arrives, and whoever ticks one off notifies the department that logged it.
 const MEDICATION_ALERT_DEPT = brand.medicationAlertDept;
 
+// The appointment schedule: a whiteboard of today's (or any day's) appointments in a few columns, e.g. consulting rooms.
+// Only brands with an "appointments" block in brand.json have one; for the others this is null and nothing is shown.
+const toMinutes = (hhmm) => (hhmm === '24:00' ? 1440 : Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5)));
+const APPOINTMENTS = brand.appointments
+  ? {
+      columns: brand.appointments.columns.map(({ id, label }) => ({ id, label })),
+      dayStart: toMinutes(brand.appointments.dayStart), // minutes after midnight
+      dayEnd: toMinutes(brand.appointments.dayEnd),
+    }
+  : null;
+const APPT_COLUMN_IDS = APPOINTMENTS ? APPOINTMENTS.columns.map((c) => c.id) : [];
+// A block's colour is only a label (no meaning built in); the page draws each one in light and dark mode.
+const APPT_COLORS = ['green', 'blue', 'pink', 'yellow', 'grey'];
+// Smallest step the schedule snaps to, and the longest appointment (minutes).
+const APPT_MIN_STEP = 5;
+const APPT_MAX_LENGTH = 12 * 60;
+
 const LIMITS = {
   TEXT: 4000,
   REMINDER: 1000,
@@ -61,6 +78,9 @@ const LIMITS = {
   QUANTITY: 40,
   MAX_MEDICATIONS: 10,
   PIN: 300,
+  APPT_PATIENT: 80,
+  APPT_CLIENT: 40,
+  APPT_NOTES: 300,
   // Largest GIF that can be sent (computers keep every GIF that's sent). GIPHY's search results are often
   // 4-6 MB, so this matches the limit for attached files.
   GIF_BYTES: 15 * 1024 * 1024,
@@ -89,6 +109,11 @@ module.exports = {
   DEFAULT_QUICK_MESSAGES,
   MAX_QUICK_MESSAGES,
   MEDICATION_ALERT_DEPT,
+  APPOINTMENTS,
+  APPT_COLUMN_IDS,
+  APPT_COLORS,
+  APPT_MIN_STEP,
+  APPT_MAX_LENGTH,
   NETWORK,
   LIMITS,
 };

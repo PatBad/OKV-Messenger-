@@ -916,6 +916,11 @@ function isUnread(m, { department, lastReadAt, since }) {
 }
 
 module.exports = {
+  RecordLog,
+  compareRecords,
+  validId,
+  validTime,
+  validHost,
   MessageStore,
   DeletionLog,
   ReactionLog,

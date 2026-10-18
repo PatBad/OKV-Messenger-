@@ -15,6 +15,7 @@ const el = {
   netStatus: $('net-status'),
   netText: $('net-text'),
   openSettings: $('open-settings'),
+  openSchedule: $('open-schedule'),
   collapse: $('collapse'),
   onboarding: $('screen-onboarding'),
   onboardingDepts: $('onboarding-depts'),
@@ -2573,6 +2574,7 @@ function renderUpdate() {
 el.updateBtn.addEventListener('click', () => okv.updateAction(state.update.state === 'ready' ? 'install' : 'check'));
 el.bannerBtn.addEventListener('click', () => okv.updateAction('install'));
 el.openData.addEventListener('click', () => okv.openDataFolder());
+el.openSchedule.addEventListener('click', () => okv.openSchedule());
 el.openSettings.addEventListener('click', () => showScreen('settings'));
 el.closeSettings.addEventListener('click', () => showScreen(state.section));
 el.optSound.addEventListener('change', async () => {
@@ -2696,6 +2698,7 @@ async function init() {
   const s = await okv.getState();
   Object.assign(state, {
     productName: (s.brand && s.brand.productName) || state.productName,
+    hasSchedule: Boolean(s.appointments && s.appointments.enabled),
     departments: s.departments,
     reactionChoices: s.reactions || [],
     gifMaxBytes: s.gifMaxBytes || state.gifMaxBytes,
@@ -2718,6 +2721,7 @@ async function init() {
     update: s.update,
     newSince: s.lastReadAt,
   });
+  el.openSchedule.hidden = !state.hasSchedule;
   el.version.textContent = s.version;
   el.host.textContent = s.host;
   el.author.value = s.settings.author || '';

@@ -157,6 +157,34 @@ If the same clinic network runs two brands, give each a different `network.udpPo
 
 Every release holds one installer and one update file per brand (for OKV `latest.yml`; for a brand with `"channel": "noordhoek"` it is `noordhoek.yml`). A clinic's app only looks at its own update file, so it only ever installs its own brand's installer.
 
+### The appointment schedule (only for clinics that have it)
+
+A brand with an `appointments` block in its `brand.json` gets an appointment whiteboard; a brand without one (OKV) has no trace of it: no button, no tray entry, no data file. At the moment only Noordhoek has it:
+
+```json
+"appointments": {
+  "columns": [
+    { "id": "consult1", "label": "Consult 1" },
+    { "id": "consult2", "label": "Consult 2" },
+    { "id": "procedures", "label": "Procedures" }
+  ],
+  "dayStart": "07:30",
+  "dayEnd": "18:00"
+}
+```
+
+`columns` are the parallel columns (1 to 6; the `id` is stored with each appointment, so don't rename or remove one that is in use, but its `label` can change freely) and `dayStart` / `dayEnd` are the opening hours drawn on the grid (times outside them can still be booked).
+
+**Opening it:** the calendar button in the message board's top bar, or **Open appointments** in the tray icon's menu. It is its own window, so minimising the board leaves it open, and if it is closed it is reopened the same way. It remembers its size, position, row size and "keep on top".
+
+**Using it:**
+- **Book:** click an empty slot for a 15-minute appointment, or drag down an empty area for the length you want. A form asks for the patient (required), client, notes, colour (green, blue, pink, yellow or grey; it is only a label), column, date and times.
+- **Move or change:** drag a block to another time or column, drag its top or bottom edge to change the length, or click it to edit or delete it (a delete can be undone straight away).
+- **Zoom:** the **Minutes per row** buttons (5, 10, 15, 30) change the scale, and drags snap to that step.
+- **Days:** Previous / Today / Next, or pick a date, to look ahead or back.
+
+**How it is shared:** like messages, appointments are stored on every computer and copied between them over the clinic network (`history\appointments.jsonl`, included in **Back up everything**). Edits and deletes are recorded as new entries, so when two people change the same appointment the later change wins. A booking that overlaps another in the same column is refused; if two computers book the same slot at the same moment, both appear side by side with a red `!` so someone can sort it out. Unlike messages, appointments are never archived.
+
 ### Running two copies for testing
 
 These environment variables let several copies run on one PC without clashing, and keep traffic on localhost so no firewall prompt appears:
@@ -183,6 +211,9 @@ src/main/exporter.js   Saving messages as CSV, reading the archive, backups
 src/main/files.js      Attached files: safety checks (blocked types, programs by content), storage by fingerprint
 src/main/media.js      What the Media tab lists
 src/main/updater.js    Auto-update from GitHub Releases
+src/main/appointments.js  The appointment schedule's records and rules (only used by brands that have one)
+src/renderer/schedule*.*  The appointment schedule window (page, styles, behaviour, and the unit-tested layout maths)
+src/preload-schedule.js   The bridge for the schedule window
 src/main/config.js     Per-computer settings (department, icon position, board size, …)
 src/preload.js         The safe bridge between the window and the main process
 src/renderer/          The interface (HTML/CSS/JS, no framework)

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Appointments</title>
+    <link rel="stylesheet" href="brand.css" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="schedule.css" />
+  </head>
+  <body class="sch">
+    <header class="sch-bar">
+      <div class="sch-nav">
+        <button id="prev" class="sch-btn sch-icon" type="button" title="Previous day" aria-label="Previous day">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <button id="today" class="sch-btn" type="button" title="Go to today">Today</button>
+        <button id="next" class="sch-btn sch-icon" type="button" title="Next day" aria-label="Next day">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        <h1 id="day-label" class="sch-day" aria-live="polite"></h1>
+        <input id="day-pick" class="sch-date" type="date" title="Jump to a date" aria-label="Jump to a date" />
+      </div>
+      <div class="sch-tools">
+        <div class="sch-rows">
+          <span class="sch-rows-label" id="rows-label">Minutes per row</span>
+          <div id="steps" class="sch-seg" role="group" aria-labelledby="rows-label"></div>
+        </div>
+        <label class="sch-check" title="Keep this window above other programs">
+          <input id="on-top" type="checkbox" />
+          <span>Keep on top</span>
+        </label>
+      </div>
+    </header>
+
+    <main id="scroller" class="sch-scroll">
+      <div id="grid" class="sch-grid" aria-label="Appointment schedule"></div>
+    </main>
+
+    <div id="backdrop" class="sch-backdrop" hidden>
+      <form id="dialog" class="sch-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" autocomplete="off">
+        <h2 id="dialog-title">New appointment</h2>
+
+        <label class="sch-field">
+          <span>Patient</span>
+          <input id="f-patient" type="text" maxlength="80" required placeholder="e.g. Bella" />
+        </label>
+        <label class="sch-field">
+          <span>Client <em>(optional)</em></span>
+          <input id="f-client" type="text" maxlength="40" placeholder="e.g. Smith" />
+        </label>
+        <label class="sch-field">
+          <span>Notes <em>(optional)</em></span>
+          <textarea id="f-notes" rows="3" maxlength="300" placeholder="e.g. Annual vaccination"></textarea>
+        </label>
+
+        <div class="sch-row">
+          <label class="sch-field">
+            <span>Column</span>
+            <select id="f-col"></select>
+          </label>
+          <label class="sch-field">
+            <span>Date</span>
+            <input id="f-day" type="date" required />
+          </label>
+        </div>
+        <div class="sch-row">
+          <label class="sch-field">
+            <span>Start</span>
+            <input id="f-start" type="time" step="300" required />
+          </label>
+          <label class="sch-field">
+            <span>End</span>
+            <input id="f-end" type="time" step="300" required />
+          </label>
+          <div class="sch-field sch-length"><span>Length</span><strong id="f-length"></strong></div>
+        </div>
+
+        <fieldset class="sch-field sch-colors">
+          <legend>Colour</legend>
+          <div id="f-colors" class="sch-swatches"></div>
+        </fieldset>
+
+        <p id="dialog-error" class="sch-error" role="alert" hidden></p>
+        <p id="dialog-meta" class="sch-meta"></p>
+
+        <div class="sch-actions">
+          <button id="f-delete" class="sch-btn sch-danger" type="button" hidden>Delete</button>
+          <span class="sch-spacer"></span>
+          <button id="f-cancel" class="sch-btn" type="button">Cancel</button>
+          <button id="f-save" class="sch-btn sch-primary" type="submit">Save</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="tip" class="sch-tip" hidden></div>
+    <div id="toast" class="sch-toast" role="status" hidden>
+      <span id="toast-text"></span>
+      <button id="toast-action" class="sch-toast-action" type="button" hidden></button>
+    </div>
+
+    <script src="schedule-layout.js"></script>
+    <script src="schedule.js"></script>
+  </body>
+</html>

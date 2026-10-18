@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell, protocol, dialog, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell, protocol, dialog, clipboard, nativeTheme } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -17,10 +17,14 @@ const {
   DEFAULT_QUICK_MESSAGES,
   MAX_QUICK_MESSAGES,
   MEDICATION_ALERT_DEPT,
+  APPOINTMENTS,
+  APPT_COLUMN_IDS,
+  APPT_COLORS,
   LIMITS,
 } = require('./constants');
 const brand = require('./brand');
 const { Config } = require('./config');
+const { AppointmentLog, sanitizeDetails: sanitizeApptDetails, validDay: validApptDay } = require('./appointments');
 const {
   MessageStore,
   DeletionLog,
@@ -83,6 +87,8 @@ let files; // attached files and images, named by fingerprint
 let reactions; // emoji reactions, shared with the other computers
 let reminders; // reminders and their done/cancelled history, shared
 let medications; // repeat-medication requests and their done/cancelled history, shared
+let appointments = null; // the appointment schedule, shared (only for brands that have one)
+let scheduleWin = null; // the schedule window, when it is open
 let edits; // corrections to message text, shared
 let receipts; // which departments have seen which messages, shared
 let pins; // the notice pinned at the top of the board, shared
@@ -150,6 +156,7 @@ async function start() {
   reactions = new ReactionLog(historyDir).load();
   reminders = new ReminderLog(historyDir).load();
   medications = new MedicationLog(historyDir).load();
+  appointments = APPOINTMENTS ? new AppointmentLog(historyDir).load() : null;
   edits = new EditLog(historyDir).load();
   receipts = new ReceiptLog(historyDir).load();
   pins = new PinLog(historyDir).load();
@@ -165,6 +172,7 @@ async function start() {
   reactions.on('added', onMessagesChanged);
   reminders.on('added', onRemindersAdded);
   medications.on('added', onMedicationsAdded);
+  if (appointments) appointments.on('added', onAppointmentsAdded);
   edits.on('added', onMessagesChanged);
   receipts.on('added', (added) => {
     if (added.some((r) => !r.local)) onMessagesChanged(); // someone else has seen a message
@@ -187,6 +195,7 @@ async function start() {
     reactions,
     reminders,
     medications,
+    appointments,
     edits,
     receipts,
     pins,
@@ -417,6 +426,7 @@ function refreshTray() {
       { label: dept ? `Sending as ${dept.label}` : 'No department chosen yet', enabled: false },
       { type: 'separator' },
       { label: 'Open messages', click: () => setExpanded(true) },
+      ...(APPOINTMENTS ? [{ label: 'Open appointments', click: openSchedule }] : []),
       {
         label: 'Settings…',
         click: () => {
@@ -852,12 +862,190 @@ function applyAutoStart() {
   app.setLoginItemSettings({ openAtLogin: !!config.get('autoStart') });
 }
 
+// ---------- Appointments ----------
+// A separate window, only for brands with an "appointments" block in brand.json: a day's appointments in
+// columns (e.g. consulting rooms). It is independent of the message board: minimising the board leaves it
+// open, and closing it is reopened from the board's top bar or the tray menu.
+
+const SCHEDULE_STEPS = [5, 10, 15, 30];
+const SCHEDULE_MIN_WIDTH = 640;
+const SCHEDULE_MIN_HEIGHT = 440;
+
+/** Where to put the schedule window: where it was last (if still on a screen), else centred on the main screen. */
+function scheduleBoundsFor(saved) {
+  const work = screen.getPrimaryDisplay().workArea;
+  const width = Math.min(980, work.width - 60);
+  const height = Math.min(760, work.height - 60);
+  const fallback = { width, height, x: work.x + Math.round((work.width - width) / 2), y: work.y + Math.round((work.height - height) / 2) };
+  if (!saved || ![saved.x, saved.y, saved.width, saved.height].every(Number.isFinite)) return fallback;
+  const onScreen = screen.getAllDisplays().some((d) => {
+    const w = d.workArea;
+    return saved.x + 100 < w.x + w.width && saved.x + saved.width - 100 > w.x && saved.y + 40 < w.y + w.height && saved.y > w.y - 40;
+  });
+  return onScreen
+    ? { x: saved.x, y: saved.y, width: Math.max(saved.width, SCHEDULE_MIN_WIDTH), height: Math.max(saved.height, SCHEDULE_MIN_HEIGHT) }
+    : fallback;
+}
+
+function createScheduleWindow() {
+  scheduleWin = new BrowserWindow({
+    ...scheduleBoundsFor(config.get('scheduleBounds')),
+    minWidth: SCHEDULE_MIN_WIDTH,
+    minHeight: SCHEDULE_MIN_HEIGHT,
+    title: `${brand.productName} – Appointments`,
+    icon: path.join(ASSETS, 'icon.ico'),
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#151d1d' : '#ffffff',
+    autoHideMenuBar: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload-schedule.js'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+    },
+  });
+  const w = scheduleWin;
+  w.setMenu(null);
+  if (config.get('scheduleOnTop')) w.setAlwaysOnTop(true, 'floating');
+  w.loadFile(path.join(__dirname, '..', 'renderer', 'schedule.html'));
+  w.once('ready-to-show', () => {
+    w.show();
+    w.focus();
+  });
+  w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  w.webContents.on('will-navigate', (event) => event.preventDefault());
+  // Remember where it was, so it opens in the same place next time.
+  w.on('close', () => {
+    if (!w.isDestroyed()) config.set({ scheduleBounds: w.getNormalBounds() });
+  });
+  w.on('closed', () => {
+    if (scheduleWin === w) scheduleWin = null;
+  });
+}
+
+function openSchedule() {
+  if (!APPOINTMENTS || !appointments) return;
+  if (scheduleWin && !scheduleWin.isDestroyed()) {
+    if (scheduleWin.isMinimized()) scheduleWin.restore();
+    scheduleWin.show();
+    scheduleWin.focus();
+    return;
+  }
+  createScheduleWindow();
+}
+
+function onAppointmentsAdded() {
+  if (scheduleWin && !scheduleWin.isDestroyed()) scheduleWin.webContents.send('appointments-changed');
+}
+
+const clock = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
+function needAppointments() {
+  if (!APPOINTMENTS || !appointments) throw new Error('Appointments are not available');
+}
+
+/** Saves a new appointment ('appt') or a change to one ('change', with the target's id) from this computer. */
+function writeAppointment(type, input, target = null) {
+  needAppointments();
+  const department = config.get('department');
+  if (!department) throw new Error(`Choose this computer's department in ${brand.productName} first`);
+  const details = sanitizeApptDetails(input, APPT_COLUMN_IDS);
+  if (!details) throw new Error('Those appointment details are not valid');
+  const clash = appointments.conflict(details, target);
+  if (clash) {
+    const column = APPOINTMENTS.columns.find((c) => c.id === clash.col);
+    throw new Error(`${column ? column.label : 'That column'} is already booked ${clock(clash.start)}–${clock(clash.start + clash.len)} (${clash.patient})`);
+  }
+  const [record] = appointments.add(
+    [
+      {
+        ...details,
+        type,
+        ...(target ? { target } : {}),
+        id: crypto.randomUUID(),
+        by: department,
+        byName: (config.get('author') || '').slice(0, LIMITS.AUTHOR),
+        host: HOST,
+        createdAt: Date.now(),
+      },
+    ],
+    { local: true },
+  );
+  if (!record) throw new Error('Those appointment details are not valid');
+  if (network) network.pushNow([toWire(record)], 'appointments');
+  return record;
+}
+
+function setAppointmentStatus(id, status) {
+  needAppointments();
+  const department = config.get('department');
+  if (!department) throw new Error(`Choose this computer's department in ${brand.productName} first`);
+  if (typeof id !== 'string' || !appointments.appts.has(id)) throw new Error('That appointment no longer exists');
+  const [record] = appointments.add(
+    [{ type: 'status', id: crypto.randomUUID(), target: id, status, by: department, byName: (config.get('author') || '').slice(0, LIMITS.AUTHOR), host: HOST, createdAt: Date.now() }],
+    { local: true },
+  );
+  if (record && network) network.pushNow([toWire(record)], 'appointments');
+}
+
+ipcMain.handle('open-schedule', () => openSchedule());
+
+ipcMain.handle('appt-state', () => {
+  needAppointments();
+  const step = config.get('scheduleStep');
+  return {
+    productName: brand.productName,
+    columns: APPOINTMENTS.columns,
+    dayStart: APPOINTMENTS.dayStart,
+    dayEnd: APPOINTMENTS.dayEnd,
+    colors: APPT_COLORS,
+    steps: SCHEDULE_STEPS,
+    step: SCHEDULE_STEPS.includes(step) ? step : 15,
+    onTop: Boolean(config.get('scheduleOnTop')),
+    department: config.get('department'),
+    departments: DEPARTMENTS,
+  };
+});
+
+ipcMain.handle('appt-day', (_e, day) => {
+  needAppointments();
+  if (!validApptDay(day)) throw new Error('Not a valid day');
+  return appointments.forDay(day);
+});
+
+ipcMain.handle('appt-add', (_e, input = {}) => {
+  const record = writeAppointment('appt', input);
+  return appointments.get(record.id);
+});
+
+ipcMain.handle('appt-change', (_e, input = {}) => {
+  needAppointments();
+  if (typeof input.id !== 'string' || !appointments.get(input.id)) throw new Error('That appointment no longer exists');
+  writeAppointment('change', input, input.id);
+  return appointments.get(input.id);
+});
+
+ipcMain.handle('appt-remove', (_e, { id } = {}) => setAppointmentStatus(id, 'removed'));
+ipcMain.handle('appt-restore', (_e, { id } = {}) => setAppointmentStatus(id, 'restored'));
+
+ipcMain.handle('appt-set', (_e, values = {}) => {
+  needAppointments();
+  const next = {};
+  if (SCHEDULE_STEPS.includes(values.step)) next.scheduleStep = values.step;
+  if (typeof values.onTop === 'boolean') {
+    next.scheduleOnTop = values.onTop;
+    if (scheduleWin && !scheduleWin.isDestroyed()) scheduleWin.setAlwaysOnTop(values.onTop, 'floating');
+  }
+  config.set(next);
+});
+
 // ---------- IPC ----------
 
 ipcMain.handle('get-state', () => ({
   version: app.getVersion(),
   host: HOST,
   brand: { productName: brand.productName },
+  appointments: { enabled: Boolean(APPOINTMENTS) },
   departments: DEPARTMENTS,
   reactions: REACTIONS,
   gifPlaceholder: GIF_PLACEHOLDER,

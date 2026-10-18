@@ -83,6 +83,30 @@ function validateBrand(b, folderName) {
   }
   need(ids.has(b.medicationAlertDept), 'medicationAlertDept must be one of the department ids');
 
+  // Optional: the appointment schedule window. A brand without this block has no schedule at all.
+  if (b.appointments !== undefined) {
+    const a = b.appointments;
+    need(a && typeof a === 'object', 'appointments must be an object');
+    const cols = a && Array.isArray(a.columns) ? a.columns : [];
+    need(cols.length >= 1 && cols.length <= 6, 'appointments.columns needs between 1 and 6 columns');
+    const colIds = new Set();
+    for (const c of cols) {
+      need(c && SLUG.test(c.id || ''), `appointments column id "${c && c.id}" must be lower-case letters, digits and dashes`);
+      need(c && !colIds.has(c.id), `appointments column id "${c && c.id}" is used twice`);
+      if (c) colIds.add(c.id);
+      need(c && str(c.label) && c.label.length <= 24, `appointments column "${c && c.id}" needs a label of up to 24 characters`);
+    }
+    const minutes = (t) => {
+      const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(t || '');
+      return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+    };
+    const from = minutes(a && a.dayStart);
+    const to = a && a.dayEnd === '24:00' ? 1440 : minutes(a && a.dayEnd);
+    need(from !== null && from % 5 === 0, 'appointments.dayStart must be a time like 07:30 (a multiple of 5 minutes)');
+    need(to !== null && to % 5 === 0, 'appointments.dayEnd must be a time like 18:00 (a multiple of 5 minutes)');
+    need(from !== null && to !== null && to - from >= 60, 'appointments.dayEnd must be at least an hour after dayStart');
+  }
+
   for (const f of ['logo.svg', 'icon.ico', 'icon.png']) {
     need(fs.existsSync(path.join(BRANDS_DIR, folderName, f)), `${f} is missing from brands/${folderName}/`);
   }

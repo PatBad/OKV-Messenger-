@@ -74,6 +74,7 @@ class Network extends EventEmitter {
     reactions = null,
     reminders = null,
     medications = null,
+    appointments = null,
     edits = null,
     receipts = null,
     pins = null,
@@ -111,6 +112,9 @@ class Network extends EventEmitter {
     }
     if (medications) {
       this.collections.push({ name: 'medications', store: medications, prefix: '/medications', key: 'records', beacon: 'md' });
+    }
+    if (appointments) {
+      this.collections.push({ name: 'appointments', store: appointments, prefix: '/appointments', key: 'records', beacon: 'ap' });
     }
     if (edits) this.collections.push({ name: 'edits', store: edits, prefix: '/edits', key: 'records', beacon: 'e' });
     if (receipts) this.collections.push({ name: 'receipts', store: receipts, prefix: '/receipts', key: 'records', beacon: 'sn' });

@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld('okv', {
   resizeEnd: () => ipcRenderer.send('resize-end'),
   updateAction: (action) => ipcRenderer.invoke('update-action', action),
   openDataFolder: () => ipcRenderer.invoke('open-data-folder'),
+  openSchedule: () => ipcRenderer.invoke('open-schedule'),
 
   onView: on('view'),
   onMessages: on('messages-added'),

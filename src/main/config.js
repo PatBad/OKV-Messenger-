@@ -14,6 +14,9 @@ const DEFAULTS = {
   quietUntil: null, // sounds are muted until this time
   peerHistory: {}, // computers seen on the network recently, for the health view
   lastReadAt: 0,
+  scheduleBounds: null, // where the appointment schedule window was last
+  scheduleOnTop: false, // keep the schedule window above other programs
+  scheduleStep: 15, // minutes per row in the schedule (5, 10, 15 or 30)
   firstRunAt: null,
   peerId: null,
   peerHost: null,
