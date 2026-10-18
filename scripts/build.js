@@ -1,7 +1,8 @@
 'use strict';
 
 // Builds the Windows installer for one brand, several, or all of them. Each brand's files go to
-// dist/<id>/ and the list of files to publish with a release goes to dist/release-files.txt.
+// dist/<id>/. Also writes dist/brands.json (what install.ps1 reads to find each installer) and
+// dist/release-files.txt (the files to publish with a release).
 //
 //   node scripts/build.js              all brands
 //   node scripts/build.js okv          just one
@@ -21,6 +22,7 @@ async function main() {
   const version = require('../package.json').version;
   const dist = path.join(brandLib.ROOT, 'dist');
   const files = [];
+  const manifestItems = [];
 
   for (const id of ids) {
     const brand = brandLib.applyBrand(id);
@@ -33,8 +35,15 @@ async function main() {
       if (!fs.existsSync(path.join(brandLib.ROOT, out, name))) throw new Error(`Expected ${out}/${name} but it was not built`);
       files.push(`${out}/${name}`.replace(/\\/g, '/'));
     }
+    manifestItems.push({
+      brand,
+      sha512: brandLib.parseSha512(fs.readFileSync(path.join(brandLib.ROOT, out, brandLib.updateFileName(brand)), 'utf8')),
+      size: fs.statSync(path.join(brandLib.ROOT, out, brandLib.installerFileName(brand, version))).size,
+    });
   }
 
+  fs.writeFileSync(path.join(dist, 'brands.json'), `${JSON.stringify(brandLib.releaseManifest(version, manifestItems), null, 2)}\n`);
+  files.push('dist/brands.json');
   fs.writeFileSync(path.join(dist, 'release-files.txt'), `${files.join('\n')}\n`);
   console.log(`\nBuilt ${ids.length} brand(s). Files for the release:\n  ${files.join('\n  ')}`);
 }

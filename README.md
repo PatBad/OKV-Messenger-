@@ -51,6 +51,20 @@ The first time it runs, the app asks which department the computer belongs to. Y
 
 The installer puts the app in the current Windows user's profile, so future updates install silently without any admin prompt.
 
+### Installing from PowerShell
+
+Instead of downloading by hand, open PowerShell on the computer and paste this, with the clinic's short name at the end (`okv`, `noordhoek`, ...):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PatBad/OKV-Messenger-/main/install.ps1))) noordhoek
+```
+
+Run it with no name to list the clinics available. The script ([`install.ps1`](install.ps1)) finds the latest release, downloads that clinic's installer, checks it against the checksum in the release's `brands.json`, and runs it. It does nothing if that clinic's app is already installed and up to date, so it is safe to run twice. A file downloaded this way isn't marked as coming from the internet, so Windows normally doesn't show the "Windows protected your PC" warning. Windows still asks once for the firewall rules.
+
+Options go after the name: `-Force` (reinstall anyway), `-Silent` (no installer window and no firewall prompt, like an auto-update), `-DryRun` (download and check, but don't install). If you can't pass options, set the name in an environment variable instead: `$env:MESSENGER_BRAND='noordhoek'; irm https://raw.githubusercontent.com/PatBad/OKV-Messenger-/main/install.ps1 | iex`
+
+This only works once a release contains the clinic's installer and `brands.json`. Releases published before the brand system (up to 1.12.0) don't, so use the download link above for those. As with any command that runs a script from the internet, only run it from this repository's address.
+
 ## How messages get between computers
 
 - Every running copy announces itself on the local network every few seconds (UDP port **41234**).

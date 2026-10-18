@@ -121,6 +121,30 @@ const slug = (b) => b.productName.replace(/\s+/g, '-');
 const installerFileName = (b, version) => `${slug(b)}-Setup-${version}.exe`;
 const updateFileName = (b) => `${b.update.channel || 'latest'}.yml`;
 
+/** The "sha512:" value electron-builder wrote into an update file (latest.yml, <channel>.yml). */
+function parseSha512(yml) {
+  const m = /^sha512:\s*(\S+)\s*$/m.exec(yml);
+  if (!m) throw new Error('no sha512 found in the update file');
+  return m[1];
+}
+
+/**
+ * brands.json, published with every release. install.ps1 reads it to find each clinic's installer and
+ * check the download. items: [{ brand, sha512, size }].
+ */
+function releaseManifest(version, items) {
+  return {
+    version,
+    brands: items.map(({ brand, sha512, size }) => ({
+      id: brand.id,
+      productName: brand.productName,
+      installer: installerFileName(brand, version),
+      sha512,
+      size,
+    })),
+  };
+}
+
 // ---------- applying a brand ----------
 
 function copy(from, to) {
@@ -236,4 +260,6 @@ module.exports = {
   slug,
   installerFileName,
   updateFileName,
+  parseSha512,
+  releaseManifest,
 };
