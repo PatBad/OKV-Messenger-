@@ -6,12 +6,13 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: okv-gif: okv-file:; font-src 'self'"
     />
-    <title>OKV Messenger</title>
+    <title>{{productName}}</title>
+    <link rel="stylesheet" href="brand.css" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body class="is-collapsed">
     <!-- Collapsed: just the logo bubble -->
-    <button id="bubble" class="bubble" type="button" aria-label="Open OKV Messenger">
+    <button id="bubble" class="bubble" type="button" aria-label="Open {{productName}}">
       <img src="../../assets/logo.svg" alt="" draggable="false" />
       <span id="badge" class="badge" hidden></span>
       <!-- Blue: a medication request your team logged has been ticked off -->
@@ -22,11 +23,11 @@
     </button>
 
     <!-- Expanded: the message board -->
-    <section id="panel" class="panel" aria-label="OKV Messenger">
+    <section id="panel" class="panel" aria-label="{{productName}}">
       <header class="topbar">
         <img class="topbar-logo" src="../../assets/logo.svg" alt="" draggable="false" />
         <div class="topbar-title" title="Drag to move">
-          <h1>OKV Messenger</h1>
+          <h1>{{productName}}</h1>
           <p class="topbar-sub">
             <span id="me-dept" class="me-dept"></span>
             <span id="net-status" class="net-status"><span class="net-dot"></span><span id="net-text"></span></span>
@@ -64,7 +65,7 @@
       <!-- First run -->
       <div id="screen-onboarding" class="screen onboarding" hidden>
         <img class="onboarding-logo" src="../../assets/logo.svg" alt="" draggable="false" />
-        <h2>Welcome to OKV Messenger</h2>
+        <h2>Welcome to {{productName}}</h2>
         <p>Which department is this computer for? Every message sent from here will be labelled with it.</p>
         <div id="onboarding-depts" class="dept-grid"></div>
         <p class="hint">You can change this later in Settings.</p>
@@ -254,7 +255,7 @@
               <input id="opt-sound" type="checkbox" role="switch" />
             </label>
             <label class="switch-row">
-              <span>Start OKV Messenger with Windows</span>
+              <span>Start {{productName}} with Windows</span>
               <input id="opt-autostart" type="checkbox" role="switch" />
             </label>
           </section>

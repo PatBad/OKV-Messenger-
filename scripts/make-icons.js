@@ -1,15 +1,20 @@
 'use strict';
 
-// Renders assets/logo.svg into the PNG and ICO files the app and installer need.
-// Run with:  npm run icons
-// To use your own logo, replace assets/logo.svg (square artwork) and run it again.
+// Renders a brand's logo.svg into the icon.png and icon.ico files the app and installer need.
+// Run with:  npm run icons -- okv        (or another brand folder name; default okv)
+// To use a new logo, replace brands/<id>/logo.svg (square artwork) and run it again.
 
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
-const root = path.join(__dirname, '..');
-const svg = fs.readFileSync(path.join(root, 'assets', 'logo.svg'));
+const brandId = process.argv.slice(1).find((a, i) => i > 0 && !a.startsWith('-') && !a.endsWith('make-icons.js') && a !== '.') || 'okv';
+const dir = path.join(__dirname, '..', 'brands', brandId);
+if (!fs.existsSync(path.join(dir, 'logo.svg'))) {
+  console.error(`brands/${brandId}/logo.svg not found`);
+  process.exit(1);
+}
+const svg = fs.readFileSync(path.join(dir, 'logo.svg'));
 const ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256];
 
 function buildIco(images) {
@@ -61,11 +66,8 @@ app.whenReady().then(async () => {
   const ico = buildIco(images);
   const png512 = await render(512);
 
-  fs.mkdirSync(path.join(root, 'build'), { recursive: true });
-  fs.writeFileSync(path.join(root, 'build', 'icon.ico'), ico);
-  fs.writeFileSync(path.join(root, 'build', 'icon.png'), png512);
-  fs.writeFileSync(path.join(root, 'assets', 'icon.ico'), ico);
-  fs.writeFileSync(path.join(root, 'assets', 'icon.png'), png512);
-  console.log('Wrote build/icon.ico, build/icon.png, assets/icon.ico, assets/icon.png');
+  fs.writeFileSync(path.join(dir, 'icon.ico'), ico);
+  fs.writeFileSync(path.join(dir, 'icon.png'), png512);
+  console.log(`Wrote brands/${brandId}/icon.ico and brands/${brandId}/icon.png`);
   app.quit();
 });

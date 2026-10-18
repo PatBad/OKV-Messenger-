@@ -1,11 +1,9 @@
 'use strict';
 
-const DEPARTMENTS = [
-  { id: 'principal', label: 'Practice Principal', color: '#7c3aed' },
-  { id: 'clinical', label: 'Clinical Team', color: '#0d9488' },
-  { id: 'reception', label: 'Reception', color: '#2563eb' },
-  { id: 'other', label: 'Other', color: '#d97706' },
-];
+const brand = require('./brand');
+
+// The departments come from the clinic's brand (brands/<id>/brand.json).
+const DEPARTMENTS = brand.departments.map(({ id, label, hint }) => ({ id, label, hint }));
 
 const DEPARTMENT_IDS = DEPARTMENTS.map((d) => d.id);
 
@@ -22,14 +20,8 @@ const ATTACHMENT_RETENTION_DAYS = 7;
 // How long after sending a message its sender may still edit it.
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
-// Buttons offered above the message box until someone changes them in Settings.
-const DEFAULT_QUICK_MESSAGES = [
-  { text: 'Client has arrived', to: 'clinical', urgent: false },
-  { text: 'Estimate is ready', to: 'reception', urgent: false },
-  { text: 'Lab results are back', to: 'clinical', urgent: false },
-  { text: 'Need a hand in theatre', to: 'clinical', urgent: true },
-  { text: 'Call me when you have a minute', to: 'all', urgent: false },
-];
+// Buttons offered above the message box until someone changes them in Settings (set per clinic in the brand).
+const DEFAULT_QUICK_MESSAGES = brand.quickMessages.map((q) => ({ ...q }));
 const MAX_QUICK_MESSAGES = 8;
 
 // A GIF message carries this as its text, so computers on versions that predate GIFs
@@ -44,11 +36,11 @@ const ATTACH_PLACEHOLDER = '[Attachment]';
 const REACTIONS = ['👌', '👍', '😂', '😅', ':dead-inside:'];
 
 const NETWORK = {
-  APP_ID: 'okv-messenger',
+  APP_ID: brand.network.appId,
   PROTOCOL: 1,
-  UDP_PORT: 41234,
+  UDP_PORT: brand.network.udpPort,
   // The HTTP sync server takes the first free port in this range.
-  TCP_PORTS: [41235, 41236, 41237, 41238, 41239],
+  TCP_PORTS: brand.network.tcpPorts,
   BEACON_INTERVAL_MS: 8000,
   PEER_TIMEOUT_MS: 45000,
   REQUEST_TIMEOUT_MS: 8000,
@@ -59,7 +51,7 @@ const NETWORK = {
 
 // Medication requests (clients phoning in for repeat scripts / chronic medication). Reception logs them;
 // the department below is alerted when a new one arrives, and whoever ticks one off notifies the department that logged it.
-const MEDICATION_ALERT_DEPT = 'clinical';
+const MEDICATION_ALERT_DEPT = brand.medicationAlertDept;
 
 const LIMITS = {
   TEXT: 4000,

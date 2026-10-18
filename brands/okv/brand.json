@@ -1,0 +1,53 @@
+{
+  "id": "okv",
+  "packageName": "okv-messenger",
+  "productName": "OKV Messenger",
+  "shortName": "OKV",
+  "organisation": "OKV",
+  "description": "Always-on-top message board for sharing messages between departments of the clinic.",
+  "appId": "com.okv.messenger",
+
+  "network": {
+    "appId": "okv-messenger",
+    "udpPort": 41234,
+    "tcpPorts": [41235, 41236, 41237, 41238, 41239]
+  },
+
+  "update": {
+    "owner": "PatBad",
+    "repo": "OKV-Messenger-",
+    "channel": null
+  },
+
+  "theme": {
+    "light": {
+      "primary": "#0f766e",
+      "primaryHover": "#0b5f58",
+      "primarySoft": "#e3f3f1",
+      "onPrimary": "#ffffff"
+    },
+    "dark": {
+      "primary": "#2bb5a6",
+      "primaryHover": "#3fcaba",
+      "primarySoft": "#193634",
+      "onPrimary": "#06201d"
+    }
+  },
+
+  "departments": [
+    { "id": "principal", "label": "Practice Principal", "hint": "Practice owner & management", "color": "#7c3aed", "colorDark": "#a78bfa" },
+    { "id": "clinical", "label": "Clinical Team", "hint": "Vets, nurses & animal care", "color": "#0d9488", "colorDark": "#2dd4bf" },
+    { "id": "reception", "label": "Reception", "hint": "Front desk & client care", "color": "#2563eb", "colorDark": "#60a5fa" },
+    { "id": "other", "label": "Other", "hint": "Anyone else in the clinic", "color": "#c2410c", "colorDark": "#fb923c" }
+  ],
+
+  "quickMessages": [
+    { "text": "Client has arrived", "to": "clinical", "urgent": false },
+    { "text": "Estimate is ready", "to": "reception", "urgent": false },
+    { "text": "Lab results are back", "to": "clinical", "urgent": false },
+    { "text": "Need a hand in theatre", "to": "clinical", "urgent": true },
+    { "text": "Call me when you have a minute", "to": "all", "urgent": false }
+  ],
+
+  "medicationAlertDept": "clinical"
+}

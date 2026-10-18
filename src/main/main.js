@@ -19,6 +19,7 @@ const {
   MEDICATION_ALERT_DEPT,
   LIMITS,
 } = require('./constants');
+const brand = require('./brand');
 const { Config } = require('./config');
 const {
   MessageStore,
@@ -109,7 +110,7 @@ if (!app.requestSingleInstanceLock()) {
 async function start() {
   const dataDir = app.getPath('userData');
   log = createLogger(path.join(dataDir, 'logs'));
-  log.info(`OKV Messenger ${app.getVersion()} starting on ${HOST}`);
+  log.info(`${brand.productName} ${app.getVersion()} starting on ${HOST}`);
 
   config = new Config(dataDir);
   // A copied/imaged profile keeps the old id; give each computer its own.
@@ -248,7 +249,7 @@ function createWindow() {
     skipTaskbar: true,
     alwaysOnTop: true,
     show: false,
-    title: 'OKV Messenger',
+    title: brand.productName,
     icon: path.join(ASSETS, 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
@@ -409,10 +410,10 @@ function refreshTray() {
   const update = updater ? updater.status : { state: 'dev' };
   const summary = unread();
   const unreadNow = summary.count + summary.reminders.unseen + summary.medications.requests + summary.medications.completed;
-  tray.setToolTip(unreadNow ? `OKV Messenger – ${unreadNow} new` : 'OKV Messenger');
+  tray.setToolTip(unreadNow ? `${brand.productName} – ${unreadNow} new` : brand.productName);
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: `OKV Messenger ${app.getVersion()}`, enabled: false },
+      { label: `${brand.productName} ${app.getVersion()}`, enabled: false },
       { label: dept ? `Sending as ${dept.label}` : 'No department chosen yet', enabled: false },
       { type: 'separator' },
       { label: 'Open messages', click: () => setExpanded(true) },
@@ -430,7 +431,7 @@ function refreshTray() {
         : { label: 'Check for updates', enabled: app.isPackaged, click: () => updater.check() },
       { type: 'separator' },
       {
-        label: 'Quit OKV Messenger',
+        label: `Quit ${brand.productName}`,
         click: () => {
           quitting = true;
           app.quit();
@@ -856,6 +857,7 @@ function applyAutoStart() {
 ipcMain.handle('get-state', () => ({
   version: app.getVersion(),
   host: HOST,
+  brand: { productName: brand.productName },
   departments: DEPARTMENTS,
   reactions: REACTIONS,
   gifPlaceholder: GIF_PLACEHOLDER,
@@ -1256,7 +1258,7 @@ ipcMain.handle('export-messages', async (_e, { range } = {}) => {
   // OKV_TEST_PICK (development only) skips the file dialogs so automated checks can save into a folder.
   const chosen = env.OKV_TEST_PICK ? { filePath: path.join(env.OKV_TEST_PICK, 'export.csv') } : await dialog.showSaveDialog(win, {
     title: 'Save messages',
-    defaultPath: path.join(app.getPath('documents'), `OKV-messages-${label}-${stamp}.csv`),
+    defaultPath: path.join(app.getPath('documents'), `${brand.shortName}-messages-${label}-${stamp}.csv`),
     filters: [{ name: 'Spreadsheet (CSV)', extensions: ['csv'] }],
   });
   if (chosen.canceled || !chosen.filePath) return { canceled: true };
@@ -1278,7 +1280,7 @@ ipcMain.handle('backup-history', async () => {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
-  const dest = path.join(picked.filePaths[0], `OKV-Messenger-backup-${stamp}`);
+  const dest = path.join(picked.filePaths[0], `${brand.productName.replace(/\s+/g, '-')}-backup-${stamp}`);
   fs.mkdirSync(dest, { recursive: true });
   const result = copyFolder(path.join(app.getPath('userData'), 'history'), path.join(dest, 'history'));
   fs.copyFileSync(config.file, path.join(dest, 'config.json'));

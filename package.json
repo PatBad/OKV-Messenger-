@@ -12,10 +12,13 @@
     "url": "https://github.com/PatBad/OKV-Messenger-.git"
   },
   "scripts": {
+    "brand": "node scripts/apply-brand.js",
+    "prestart": "node scripts/apply-brand.js",
     "start": "electron .",
+    "pretest": "node scripts/apply-brand.js okv",
     "test": "node --test test/*.test.js",
     "icons": "electron scripts/make-icons.js",
-    "dist": "electron-builder --win --publish never"
+    "dist": "node scripts/build.js"
   },
   "dependencies": {
     "electron-updater": "^6.8.9"
@@ -23,48 +26,5 @@
   "devDependencies": {
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3"
-  },
-  "build": {
-    "appId": "com.okv.messenger",
-    "productName": "OKV Messenger",
-    "copyright": "OKV",
-    "directories": {
-      "output": "dist",
-      "buildResources": "build"
-    },
-    "files": [
-      "src/**/*",
-      "assets/**/*",
-      "package.json"
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "build/icon.ico",
-      "artifactName": "OKV-Messenger-Setup-${version}.${ext}"
-    },
-    "nsis": {
-      "oneClick": true,
-      "perMachine": false,
-      "runAfterFinish": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "OKV Messenger",
-      "include": "build/installer.nsh"
-    },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "PatBad",
-        "repo": "OKV-Messenger-",
-        "releaseType": "release"
-      }
-    ]
   }
 }

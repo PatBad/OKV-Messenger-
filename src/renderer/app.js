@@ -3,12 +3,6 @@
 /* global okv */
 
 const PAGE = 150;
-const DEPT_HINTS = {
-  principal: 'Practice owner & management',
-  clinical: 'Vets, nurses & animal care',
-  reception: 'Front desk & client care',
-  other: 'Anyone else in the clinic',
-};
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -130,6 +124,7 @@ const el = {
 };
 
 const state = {
+  productName: 'Messenger',
   departments: [],
   settings: {},
   expanded: false,
@@ -445,8 +440,8 @@ function renderBadge() {
   el.badgeBlue.hidden = !blue;
   el.badgeBlueCount.textContent = med.completed > 99 ? '99+' : String(med.completed);
   const notes = [n ? `${n} new` : null, blue ? `${med.completed} medication${med.completed === 1 ? '' : 's'} completed` : null].filter(Boolean);
-  el.bubble.setAttribute('aria-label', notes.length ? `Open OKV Messenger, ${notes.join(', ')}` : 'Open OKV Messenger');
-  el.bubble.title = notes.length ? `OKV Messenger – ${notes.join(', ')}` : 'OKV Messenger';
+  el.bubble.setAttribute('aria-label', notes.length ? `Open ${state.productName}, ${notes.join(', ')}` : `Open ${state.productName}`);
+  el.bubble.title = notes.length ? `${state.productName} – ${notes.join(', ')}` : state.productName;
 }
 
 function bump() {
@@ -465,7 +460,7 @@ function renderHeader() {
   const n = state.peers.length;
   el.netStatus.classList.toggle('is-online', n > 0);
   el.netText.textContent = n === 0 ? 'No other PCs found' : `${n} other PC${n === 1 ? '' : 's'} online`;
-  el.netStatus.title = n === 0 ? 'No other computers running OKV Messenger found' : `${n} other computer${n === 1 ? '' : 's'} online`;
+  el.netStatus.title = n === 0 ? `No other computers running ${state.productName} found` : `${n} other computer${n === 1 ? '' : 's'} online`;
   el.collapse.hidden = !dept;
   el.openSettings.hidden = !dept;
 }
@@ -520,7 +515,7 @@ function deptButtons(container, compact) {
           onclick: () => chooseDepartment(d.id),
         },
         h('span', { class: 'dept-swatch' }),
-        h('span', null, h('strong', null, d.label), compact ? null : h('small', null, DEPT_HINTS[d.id] || '')),
+        h('span', null, h('strong', null, d.label), compact ? null : h('small', null, d.hint || '')),
       ),
     ),
   );
@@ -1409,7 +1404,7 @@ function renderPeerReport() {
   const { self, peers } = report;
   el.peerSelf.textContent = `This computer: ${self.host}${self.dept ? ` · ${deptLabel(self.dept)}` : ''} · version ${self.version}`;
   if (!peers.length) {
-    el.peerList.replaceChildren(h('li', null, h('span', { class: 'peer-empty' }, 'No other computers seen yet. They appear here automatically while OKV Messenger is running on them.')));
+    el.peerList.replaceChildren(h('li', null, h('span', { class: 'peer-empty' }, `No other computers seen yet. They appear here automatically while ${state.productName} is running on them.`)));
     return;
   }
   el.peerList.replaceChildren(
@@ -2700,6 +2695,7 @@ okv.onOpen((screen) => {
 async function init() {
   const s = await okv.getState();
   Object.assign(state, {
+    productName: (s.brand && s.brand.productName) || state.productName,
     departments: s.departments,
     reactionChoices: s.reactions || [],
     gifMaxBytes: s.gifMaxBytes || state.gifMaxBytes,

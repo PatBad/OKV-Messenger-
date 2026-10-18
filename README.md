@@ -91,7 +91,7 @@ Installed copies check this repository's GitHub Releases 30 seconds after starti
    ```bash
    git push --follow-tags
    ```
-4. GitHub Actions (`.github/workflows/release.yml`) runs the tests, builds the installer and publishes it as a release. Every clinic computer picks it up within 4 hours, or straight away on restart.
+4. GitHub Actions (`.github/workflows/release.yml`) runs the tests, builds an installer for every brand and publishes them together as one release. Every clinic computer picks up its own brand's update within 4 hours, or straight away on restart.
 
 ## Development
 
@@ -107,14 +107,41 @@ npm start
 
 | Command | What it does |
 | --- | --- |
-| `npm start` | Run the app from source |
-| `npm test` | Run the storage and network-sync tests |
-| `npm run dist` | Build the installer into `dist/` without publishing |
-| `npm run icons` | Regenerate the icon files from `assets/logo.svg` |
+| `npm start` | Run the app from source as the OKV brand (`BRAND=name npm start` for another brand) |
+| `npm test` | Run the tests (always with the OKV brand) |
+| `npm run dist` | Build the installer for every brand into `dist/<brand>/` without publishing (`npm run dist -- okv` for just one) |
+| `npm run brand -- name` | Make the working copy use another brand without starting it |
+| `npm run icons -- name` | Regenerate a brand's icon files from its `logo.svg` |
 
 ### Changing the logo
 
-Replace `assets/logo.svg` with the clinic's logo (square artwork looks best, since it's shown in a circle), then run `npm run icons` to regenerate the `.ico`/`.png` files used by the installer, tray icon and window.
+Replace `brands/okv/logo.svg` with the clinic's logo (square artwork looks best, since it's shown in a circle), then run `npm run icons -- okv` to regenerate the `.ico`/`.png` files used by the installer, tray icon and window.
+
+## Brands: a copy of the app for another clinic
+
+One codebase makes any number of clinic copies, such as "OKV Messenger" and "Noordhoek Vet Messenger". Everything that differs between clinics lives in one folder per clinic, `brands/<id>/`:
+
+| File | What it holds |
+| --- | --- |
+| `brand.json` | The product name, install identity, departments and their colours, theme colour, quick-message buttons, the network ID and ports, and where updates come from |
+| `logo.svg` | The logo (square artwork) |
+| `icon.ico`, `icon.png` | Made from the logo with `npm run icons -- <id>` |
+
+Each clinic's copy is fully separate: its own installer, its own shortcut and data folder (so its own messages and settings), and its own network ID, so two clinics' apps never see each other even on the same network. They all share the same code, so a fix or feature you release reaches every clinic.
+
+### Adding a clinic
+
+1. Copy `brands/okv` to `brands/<newid>` (lower-case letters, digits and dashes).
+2. Edit `brands/<newid>/brand.json` and replace the logo. The values that **must be different** from every other brand are `id`, `appId`, `packageName`, `productName`, `network.appId` and `update.channel`. Set `update.channel` to the new id (only one brand can use `null`, which is the original OKV update file `latest.yml`).
+3. Run `npm run icons -- <newid>`, then `BRAND=<newid> npm start` (PowerShell: `$env:BRAND='<newid>'; npm start`) to look at it.
+4. Run `npm test`. It refuses a brand file with mistakes or one that clashes with another brand.
+5. Release as usual (below). The new clinic's installer appears on the same release as the others, named after its product name.
+
+If the same clinic network runs two brands, give each a different `network.udpPort` and `network.tcpPorts` as well. Otherwise the defaults are fine, because the network ID already keeps them apart.
+
+### How updates reach each clinic
+
+Every release holds one installer and one update file per brand (for OKV `latest.yml`; for a brand with `"channel": "noordhoek"` it is `noordhoek.yml`). A clinic's app only looks at its own update file, so it only ever installs its own brand's installer.
 
 ### Running two copies for testing
 
@@ -145,7 +172,10 @@ src/main/updater.js    Auto-update from GitHub Releases
 src/main/config.js     Per-computer settings (department, icon position, board size, …)
 src/preload.js         The safe bridge between the window and the main process
 src/renderer/          The interface (HTML/CSS/JS, no framework)
-build/installer.nsh    Adds the Windows Firewall rules during first install
+brands/<id>/          One clinic's identity: brand.json, logo.svg, icons (see "Brands")
+scripts/lib/brand.js   Loads and checks a brand, applies it, and makes its installer settings
+scripts/build.js       Builds the installer for each brand
+build/installer.template.nsh  Adds the Windows Firewall rules during first install (filled in per brand)
 assets/reactions/      Custom reaction pictures (e.g. "Dead inside")
 test/                  node:test suites
 ```

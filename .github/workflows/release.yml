@@ -1,8 +1,9 @@
 name: Release
 
 # Push a tag like v1.0.1 (see README "Releasing an update") and this builds the
-# Windows installer and publishes it as a GitHub Release. Every installed copy
-# of OKV Messenger checks the Releases page and updates itself.
+# Windows installer for every brand in brands/ and publishes them all as one
+# GitHub Release. Every installed copy (OKV Messenger, and any other clinic's
+# copy) checks the Releases page for its own update file and updates itself.
 
 on:
   push:
@@ -48,8 +49,10 @@ jobs:
             exit 1
           fi
 
-      - name: Build installer
-        run: npx electron-builder --win --publish never
+      # One installer per folder in brands/ (each goes to dist/<brand>/).
+      # dist/release-files.txt lists the files to publish.
+      - name: Build installers (one per brand)
+        run: node scripts/build.js
 
       # Publish with gh rather than electron-builder: electron-builder uploads
       # files in parallel and can end up creating two releases for one tag.
@@ -59,10 +62,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          mapfile -t files < <(tr -d '\r' < dist/release-files.txt)
           gh release create "$GITHUB_REF_NAME" \
-            dist/OKV-Messenger-Setup-*.exe \
-            dist/OKV-Messenger-Setup-*.exe.blockmap \
-            dist/latest.yml \
+            "${files[@]}" \
             --verify-tag \
             --title "${GITHUB_REF_NAME#v}" \
-            --notes "OKV Messenger ${GITHUB_REF_NAME#v}"
+            --notes "Version ${GITHUB_REF_NAME#v}"
