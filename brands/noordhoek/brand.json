@@ -1,0 +1,53 @@
+{
+  "id": "noordhoek",
+  "packageName": "noordhoek-messenger",
+  "productName": "Noordhoek Vet Messenger",
+  "shortName": "Noordhoek",
+  "organisation": "Noordhoek Vet",
+  "description": "Always-on-top message board for sharing messages between departments of the clinic.",
+  "appId": "com.noordhoek.messenger",
+
+  "network": {
+    "appId": "noordhoek-messenger",
+    "udpPort": 41244,
+    "tcpPorts": [41245, 41246, 41247, 41248, 41249]
+  },
+
+  "update": {
+    "owner": "PatBad",
+    "repo": "OKV-Messenger-",
+    "channel": "noordhoek"
+  },
+
+  "theme": {
+    "light": {
+      "primary": "#374151",
+      "primaryHover": "#1f2937",
+      "primarySoft": "#e5e7eb",
+      "onPrimary": "#ffffff"
+    },
+    "dark": {
+      "primary": "#9ca3af",
+      "primaryHover": "#d1d5db",
+      "primarySoft": "#1f2937",
+      "onPrimary": "#111827"
+    }
+  },
+
+  "departments": [
+    { "id": "vets", "label": "Vets", "hint": "Vets, nurses & animal care", "color": "#0d9488", "colorDark": "#2dd4bf" },
+    { "id": "reception", "label": "Reception", "hint": "Front desk & client care", "color": "#2563eb", "colorDark": "#60a5fa" },
+    { "id": "admin", "label": "Admin", "hint": "Practice management & accounts", "color": "#7c3aed", "colorDark": "#a78bfa" },
+    { "id": "other", "label": "Other", "hint": "Anyone else in the clinic", "color": "#c2410c", "colorDark": "#fb923c" }
+  ],
+
+  "quickMessages": [
+    { "text": "Client has arrived", "to": "vets", "urgent": false },
+    { "text": "Estimate is ready", "to": "reception", "urgent": false },
+    { "text": "Lab results are back", "to": "vets", "urgent": false },
+    { "text": "Need a hand in theatre", "to": "vets", "urgent": true },
+    { "text": "Call me when you have a minute", "to": "all", "urgent": false }
+  ],
+
+  "medicationAlertDept": "vets"
+}
