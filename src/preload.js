@@ -60,6 +60,8 @@ contextBridge.exposeInMainWorld('okv', {
   openSchedule: () => ipcRenderer.invoke('open-schedule'),
 
   onView: on('view'),
+  onDock: on('dock'),
+  onDockHint: on('dock-hint'),
   onMessages: on('messages-added'),
   onMessagesChanged: on('messages-changed'),
   onGifReady: on('gif-ready'),

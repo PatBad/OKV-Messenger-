@@ -8,7 +8,8 @@ const DEFAULTS = {
   author: '',
   sound: true,
   autoStart: true,
-  iconPosition: null,
+  iconPosition: null, // where the logo floats when it isn't docked
+  dock: null, // { side, edge, y } while the logo is docked to a screen edge; false once pulled out; null means not chosen yet
   panelSize: null, // { width, height } the board was last resized to
   quickMessages: null, // the buttons above the message box; null means the defaults
   quietUntil: null, // sounds are muted until this time

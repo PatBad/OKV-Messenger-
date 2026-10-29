@@ -2,7 +2,7 @@
 
 A small message board that sits on top of every window on the clinic's computers, so Practice Principal, Clinical Team, Reception and everyone else can pass messages to each other.
 
-- **Collapsed**, it's just the OKV logo floating at the edge of the screen. A red badge shows how many new messages there are for you, and a pulsing ring means one is urgent.
+- **Collapsed**, it's just the OKV logo, half tucked into the left or right edge of the screen so it stays out of the way (or floating free, if you've pulled it out). A red badge shows how many new messages there are for you, and a pulsing ring means one is urgent.
 - **Expanded**, it's the message board: every message from every department, newest at the bottom.
 
 There is no server and no internet requirement. Every computer keeps its own complete copy of the message history and shares it directly with the other computers on the clinic network.
@@ -12,8 +12,10 @@ There is no server and no internet requirement. Every computer keeps its own com
 | To… | Do this |
 | --- | --- |
 | Open the board | Click the logo |
-| Move the logo | Drag it anywhere on screen (it remembers where) |
-| Move the open board | Drag it by its top bar; the logo moves with it to the nearest corner |
+| Move the logo up or down the screen edge | Drag it up or down. It stays docked and remembers the height |
+| Pull the logo off the edge | Drag it well away from the edge (about 80 px). It then floats wherever you drop it, and remembers where |
+| Dock the logo again | Drop it within about 30 px of the left or right edge (it glows while you're close enough), or right-click the tray icon and choose **Put the icon back on the side of the screen** |
+| Move the open board | Drag it by its top bar. If the logo is docked it goes back to its dock when you close the board; a floating logo moves with the board to the nearest corner |
 | Resize the open board | Drag any edge or corner. It remembers the size you choose (smallest allowed is 340 × 440) |
 | Minimise back to the logo | Click **—** or press **Esc** |
 | Send | Type and press **Enter** (**Shift+Enter** for a new line) |

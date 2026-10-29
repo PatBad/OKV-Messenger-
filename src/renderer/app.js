@@ -311,6 +311,13 @@ async function setExpanded(expanded) {
   }
 }
 
+/** Draws the logo half-hidden by the screen edge it is docked to (side is 'left', 'right' or null when floating). */
+function applyDock(side) {
+  el.body.classList.toggle('dock-left', side === 'left');
+  el.body.classList.toggle('dock-right', side === 'right');
+  if (!side) el.bubble.classList.remove('will-dock');
+}
+
 function applyView({ expanded, origin, lastReadAt }) {
   const opening = expanded && !state.expanded;
   state.expanded = expanded;
@@ -2606,6 +2613,8 @@ document.addEventListener('keydown', (e) => {
 // ---------- Live updates from the main process ----------
 
 okv.onView(applyView);
+okv.onDock(applyDock);
+okv.onDockHint((near) => el.bubble.classList.toggle('will-dock', Boolean(near)));
 
 okv.onMessages(({ messages, alert }) => {
   if (state.screen === 'media') refreshMedia();
@@ -2736,6 +2745,7 @@ async function init() {
   renderPeers();
   renderUpdate();
   showScreen(s.settings.department ? 'board' : 'onboarding');
+  applyDock(s.dock);
   applyView({ expanded: s.expanded, lastReadAt: s.lastReadAt });
   await refresh({ toBottom: true });
 }
