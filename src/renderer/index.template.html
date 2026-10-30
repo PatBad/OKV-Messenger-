@@ -15,9 +15,13 @@
     <button id="bubble" class="bubble" type="button" aria-label="Open {{productName}}">
       <img src="../../assets/logo.svg" alt="" draggable="false" />
       <span id="badge" class="badge" hidden></span>
-      <!-- Blue: a medication request your team logged has been ticked off -->
+      <!-- Blue: a medication notification. A tick when a request your team logged has been ticked off,
+           a capsule when another department has logged a new request for you to dispense. -->
       <span id="badge-blue" class="badge badge-blue" hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path class="blue-tick" d="m5 12.5 4.5 4.5L19 7.5"/>
+          <g class="blue-pill"><path d="M10.5 20.5 3.5 13.5a4.95 4.95 0 0 1 7-7l7 7a4.95 4.95 0 0 1-7 7Z"/><path d="m8.5 8.5 7 7"/></g>
+        </svg>
         <span id="badge-blue-count"></span>
       </span>
     </button>
@@ -35,6 +39,10 @@
         </div>
         <button id="open-schedule" class="icon-btn" type="button" title="Appointments" aria-label="Appointments" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        </button>
+        <button id="open-dropbox" class="icon-btn dropbox-btn" type="button" title="Drop box: drag files and pictures in to share them without sending a message" aria-label="Drop box">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/><path d="M12 3.2a8.8 8.8 0 1 1-8.8 8.8"/><path d="M12 7a5 5 0 1 1-5 5"/></svg>
+          <span id="badge-dropbox" class="icon-badge" hidden></span>
         </button>
         <button id="quiet-btn" class="icon-btn quiet-btn" type="button" title="Quiet mode: mute sounds for a while" aria-label="Quiet mode" aria-haspopup="true">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
@@ -239,6 +247,34 @@
       </div>
 
       <!-- Settings -->
+      <!-- Drop box: a black hole to drag files and pictures into. They are shared with every computer but never go into the chat. -->
+      <div id="screen-dropbox" class="screen dropbox" hidden>
+        <div class="settings-head">
+          <button id="close-dropbox" class="icon-btn" type="button" aria-label="Back to messages">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="m11 18-6-6 6-6"/></svg>
+          </button>
+          <h2>Drop box</h2>
+        </div>
+        <div class="dropbox-body">
+          <div id="hole" class="hole" tabindex="0" role="button" aria-label="Drop box. Drag files and pictures here, or press Enter to choose them.">
+            <div class="hole-stars"></div>
+            <div class="hole-halo"></div>
+            <div class="hole-disk"><div class="hole-disk-spin"></div></div>
+            <div class="hole-core"></div>
+            <div id="hole-fx" class="hole-fx"></div>
+            <p id="hole-label" class="hole-label">Drag files and pictures here</p>
+          </div>
+          <input id="drop-input" type="file" multiple hidden />
+          <p class="dropbox-hint">
+            Anything you drop here is shared with every computer in the clinic, but it never goes into the chat.
+            <button id="drop-choose" class="link-btn" type="button">Choose files instead</button>
+          </p>
+          <h4 id="drop-heading" class="media-heading"></h4>
+          <div id="drop-list" class="drop-list" aria-live="polite"></div>
+          <p id="drop-note" class="media-note"></p>
+        </div>
+      </div>
+
       <div id="screen-settings" class="screen settings" hidden>
         <div class="settings-head">
           <button id="close-settings" class="icon-btn" type="button" aria-label="Back to messages">

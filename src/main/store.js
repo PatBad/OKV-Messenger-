@@ -230,6 +230,39 @@ function sanitizeMedicationRecord(r) {
   return null;
 }
 
+const DROP_STATUSES = ['removed', 'open'];
+
+/**
+ * The Drop box collection holds two kinds of record:
+ *  - type 'drop': a file put into the Drop box (the black hole) by one department. `file` is described like a
+ *    message attachment (fingerprint, size, name, kind), and the same rules apply: no programs, scripts or web pages.
+ *  - type 'status': taking it out of the Drop box ('removed'), or putting it back (undo)
+ */
+function sanitizeDropRecord(r) {
+  if (!r || typeof r !== 'object' || !validId(r.id)) return null;
+  const host = r.host ?? '';
+  if (!validHost(host) || !validTime(r.createdAt)) return null;
+  const createdAt = Math.floor(r.createdAt);
+
+  if (r.type === 'drop') {
+    const author = r.author ?? '';
+    if (!DEPARTMENT_IDS.includes(r.from)) return null;
+    if (typeof author !== 'string' || author.length > LIMITS.AUTHOR) return null;
+    const file = sanitizeAttachment(r.file);
+    if (!file) return null;
+    return { v: 1, type: 'drop', id: r.id, from: r.from, file, author: author.trim(), host, createdAt };
+  }
+
+  if (r.type === 'status') {
+    const byName = r.byName ?? '';
+    if (!validId(r.target) || !DROP_STATUSES.includes(r.status)) return null;
+    if (!DEPARTMENT_IDS.includes(r.by)) return null;
+    if (typeof byName !== 'string' || byName.length > LIMITS.AUTHOR) return null;
+    return { v: 1, type: 'status', id: r.id, target: r.target, status: r.status, by: r.by, byName: byName.trim(), host, createdAt };
+  }
+  return null;
+}
+
 /** A correction to a message's text, made by the department that sent it (honoured only within EDIT_WINDOW_MS). */
 function sanitizeEdit(r) {
   if (!r || typeof r !== 'object') return null;
@@ -777,6 +810,43 @@ class MedicationLog extends RecordLog {
   }
 }
 
+/** Files in the Drop box (and the history of taking them out and putting them back), shared between computers. */
+class DropLog extends RecordLog {
+  constructor(dir) {
+    super(dir, 'drops.jsonl', sanitizeDropRecord);
+    this.drops = new Map();
+    this.statuses = new Map();
+  }
+
+  _reset() {
+    this.drops = new Map();
+    this.statuses = new Map();
+  }
+
+  _track(record) {
+    if (record.type === 'drop') {
+      this.drops.set(record.id, record);
+      return;
+    }
+    const list = this.statuses.get(record.target);
+    if (list) list.push(record);
+    else this.statuses.set(record.target, [record]);
+  }
+
+  all() {
+    return [...this.drops.values()];
+  }
+
+  /** The latest status record for a file: who took it out, or null if it's in the box (never touched, or put back). */
+  removal(drop) {
+    let latest = null;
+    for (const s of this.statuses.get(drop.id) || []) {
+      if (!latest || compareRecords(s, latest) > 0) latest = s;
+    }
+    return latest && latest.status === 'removed' ? latest : null;
+  }
+}
+
 /** Corrections to message text, shared between computers. */
 class EditLog extends RecordLog {
   constructor(dir) {
@@ -926,6 +996,7 @@ module.exports = {
   ReactionLog,
   ReminderLog,
   MedicationLog,
+  DropLog,
   EditLog,
   ReceiptLog,
   PinLog,
@@ -937,6 +1008,7 @@ module.exports = {
   sanitizeReaction,
   sanitizeReminderRecord,
   sanitizeMedicationRecord,
+  sanitizeDropRecord,
   sanitizeEdit,
   sanitizeReceipt,
   sanitizePin,

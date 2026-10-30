@@ -15,6 +15,8 @@ const el = {
   netStatus: $('net-status'),
   netText: $('net-text'),
   openSettings: $('open-settings'),
+  openDropbox: $('open-dropbox'),
+  badgeDropbox: $('badge-dropbox'),
   openSchedule: $('open-schedule'),
   collapse: $('collapse'),
   onboarding: $('screen-onboarding'),
@@ -120,6 +122,16 @@ const el = {
   medRows: $('med-rows'),
   medAdd: $('med-add'),
   medError: $('med-error'),
+  dropbox: $('screen-dropbox'),
+  closeDropbox: $('close-dropbox'),
+  hole: $('hole'),
+  holeFx: $('hole-fx'),
+  holeLabel: $('hole-label'),
+  dropInput: $('drop-input'),
+  dropChoose: $('drop-choose'),
+  dropHeading: $('drop-heading'),
+  dropList: $('drop-list'),
+  dropNote: $('drop-note'),
   toastText: $('toast-text'),
   toastAction: $('toast-action'),
 };
@@ -176,6 +188,10 @@ const state = {
   medSummary: { open: 0, requests: 0, completed: 0 },
   medRows: [{ name: '', qty: '' }], // the medicines being typed into the request form
   medSending: false,
+  dropList: [], // the files in the Drop box
+  dropSummary: { unseen: 0 },
+  maxDrops: 20,
+  dropRetention: 14,
 };
 
 // ---------- Helpers ----------
@@ -257,6 +273,7 @@ function toast(message, action = null, tone = null) {
   el.toastAction.hidden = !action;
   el.toast.classList.toggle('has-action', Boolean(action));
   el.toast.classList.toggle('is-blue', tone === 'blue');
+  el.toast.classList.toggle('is-long', message.length > 46); // a long one wraps instead of running off the board
   if (action) {
     el.toastAction.textContent = action.label;
     el.toastAction.onclick = () => {
@@ -428,7 +445,8 @@ el.collapse.addEventListener('click', () => setExpanded(false));
 function renderBadge() {
   const rem = state.remSummary;
   const med = state.medSummary;
-  const n = state.unread + rem.unseen + med.requests;
+  // Red: new messages and reminders. Medication notifications have their own blue bubble.
+  const n = state.unread + rem.unseen;
   el.badge.hidden = n === 0;
   el.badge.textContent = n > 99 ? '99+' : String(n);
   el.bubble.classList.toggle('has-urgent', (state.unread > 0 && state.hasUrgentUnread) || rem.unseenDue);
@@ -437,17 +455,29 @@ function renderBadge() {
   el.badgeReminders.textContent = String(rem.open);
   el.badgeReminders.classList.toggle('is-overdue', rem.overdue > 0);
   el.badgeReminders.title = rem.overdue ? `${rem.open} open, ${rem.overdue} overdue` : `${rem.open} open`;
-  // Medications tab: blue with the number completed since you last looked, otherwise grey with how many are still to dispense.
-  const blue = med.completed > 0;
-  const tabCount = blue ? med.completed : med.open;
+  // Blue: new medication requests for us to dispense, and requests we logged that have been completed, since we last looked.
+  const blueCount = med.requests + med.completed;
+  const blue = blueCount > 0;
+  const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+  const blueNotes = [
+    med.requests ? plural(med.requests, 'new medication request', 'new medication requests') : null,
+    med.completed ? `${plural(med.completed, 'medication request', 'medication requests')} completed` : null,
+  ].filter(Boolean);
+  // Medications tab: blue with that number, otherwise grey with how many are still to dispense.
+  const tabCount = blue ? blueCount : med.open;
   el.badgeMedications.hidden = tabCount === 0;
   el.badgeMedications.textContent = String(tabCount);
   el.badgeMedications.classList.toggle('is-blue', blue);
-  el.badgeMedications.title = blue ? `${med.completed} medication request${med.completed === 1 ? '' : 's'} completed` : `${med.open} to dispense`;
-  // The blue badge on the logo is separate from the red message count.
+  el.badgeMedications.title = blue ? blueNotes.join(', ') : `${med.open} to dispense`;
+  // The blue bubble on the logo is separate from the red count. A capsule means new requests; a tick means completed ones.
   el.badgeBlue.hidden = !blue;
-  el.badgeBlueCount.textContent = med.completed > 99 ? '99+' : String(med.completed);
-  const notes = [n ? `${n} new` : null, blue ? `${med.completed} medication${med.completed === 1 ? '' : 's'} completed` : null].filter(Boolean);
+  el.badgeBlue.classList.toggle('is-request', med.requests > 0);
+  el.badgeBlueCount.textContent = blueCount > 99 ? '99+' : String(blueCount);
+  const dropped = state.dropSummary.unseen;
+  el.badgeDropbox.hidden = dropped === 0;
+  el.badgeDropbox.textContent = dropped > 99 ? '99+' : String(dropped);
+  el.openDropbox.title = dropped ? `Drop box: ${plural(dropped, 'new file', 'new files')}` : 'Drop box: drag files and pictures in to share them without sending a message';
+  const notes = [n ? `${n} new` : null, ...blueNotes].filter(Boolean);
   el.bubble.setAttribute('aria-label', notes.length ? `Open ${state.productName}, ${notes.join(', ')}` : `Open ${state.productName}`);
   el.bubble.title = notes.length ? `${state.productName} – ${notes.join(', ')}` : state.productName;
 }
@@ -471,6 +501,7 @@ function renderHeader() {
   el.netStatus.title = n === 0 ? `No other computers running ${state.productName} found` : `${n} other computer${n === 1 ? '' : 's'} online`;
   el.collapse.hidden = !dept;
   el.openSettings.hidden = !dept;
+  el.openDropbox.hidden = !dept;
 }
 
 // ---------- Screens ----------
@@ -484,11 +515,17 @@ function showScreen(name) {
   el.reminders.hidden = name !== 'reminders';
   el.medications.hidden = name !== 'medications';
   el.media.hidden = name !== 'media';
+  el.dropbox.hidden = name !== 'dropbox';
   el.settings.hidden = name !== 'settings';
   el.sections.hidden = !section;
   for (const b of el.sections.querySelectorAll('button')) b.setAttribute('aria-selected', String(b.dataset.section === name));
   if (name === 'settings') renderSettings();
   if (name === 'media') refreshMedia();
+  if (name === 'dropbox') {
+    refreshDrops();
+    if (state.expanded) okv.markDropsSeen();
+    el.hole.focus({ preventScroll: true });
+  }
   if (name === 'board') {
     renderList({ toBottom: true });
     el.text.focus();
@@ -1568,16 +1605,19 @@ async function addFiles(fileList) {
   }
 }
 
+/** The name to give a file: its own, or for a screenshot or copied picture (which arrive with no useful name) the time it was taken. */
+function fileNameOf(file) {
+  const name = String(file.name || '').split(/[\\/]/).pop().trim();
+  if (name && !/^image\.(png|jpe?g|webp|bmp)$/i.test(name)) return name;
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+  return `Screenshot ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}.${ext}`;
+}
+
 async function addAttachment(file) {
   el.composeError.hidden = true;
-  let name = String(file.name || '').split(/[\\/]/).pop().trim();
-  if (!name || /^image\.(png|jpe?g|webp|bmp)$/i.test(name)) {
-    // A screenshot or copied picture arrives with no useful name.
-    const d = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
-    name = `Screenshot ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}.${ext}`;
-  }
+  const name = fileNameOf(file);
   if (state.pendingFiles.length >= state.maxAttach) return showGifError(`You can attach up to ${state.maxAttach} files to one message.`);
   if (state.blockedExt.has(fileExt(name))) return showGifError(`“${name}” can’t be sent: programs, scripts, web pages and macro files aren’t allowed.`);
   if (file.size === 0) return showGifError(`“${name}” is empty.`);
@@ -1687,6 +1727,7 @@ function openViewer({ src, file, message }) {
   el.viewerImg.src = src;
   const who = `${deptLabel(message.from)}${message.author ? ` · ${message.author}` : ''} · ${whenLabel(message.createdAt)}`;
   el.viewerTitle.textContent = file ? `${file.name} · ${formatSize(file.size)} · ${who}` : `GIF · ${who}`;
+  el.viewerShow.hidden = !message.id;
   el.viewerSave.hidden = !file;
   el.viewerOpen.hidden = !file;
   el.viewer.hidden = false;
@@ -1815,6 +1856,208 @@ el.mediaSearch.addEventListener('input', () => {
     refreshMedia();
   }, 180);
 });
+
+// ---------- Drop box ----------
+
+let dropRequest = 0;
+
+async function refreshDrops() {
+  if (!state.settings.department) return;
+  const mine = ++dropRequest;
+  const list = await okv.listDrops();
+  if (mine !== dropRequest) return; // a newer request has been made; don't let this older answer overwrite it
+  state.dropList = list;
+  renderDrops();
+}
+
+function renderDrops() {
+  const list = state.dropList;
+  el.dropHeading.hidden = !list.length;
+  el.dropHeading.textContent = `In the Drop box · ${list.length}`;
+  el.dropNote.textContent = `Files stay in the Drop box for ${state.dropRetention} days, then are cleared automatically. Anyone can take one out.`;
+  el.dropList.replaceChildren(
+    ...(list.length
+      ? list.map(dropRow)
+      : [h('div', { class: 'drop-empty' }, h('strong', null, 'The Drop box is empty'), 'Drag a picture or file into the black hole above. Everyone in the clinic can open it from here.')]),
+  );
+}
+
+function dropRow(d) {
+  const f = d.file;
+  const a = { hash: f.hash, name: f.name, size: f.size };
+  const note = d.have ? formatSize(f.size) : 'On its way…';
+  const who = `${deptLabel(d.from)}${d.author ? ` · ${d.author}` : ''} · ${whenLabel(d.createdAt)}`;
+  const src = `okv-file://${f.hash}`;
+  const thumb =
+    f.kind === 'image' && d.have
+      ? h(
+          'button',
+          { type: 'button', class: 'drop-thumb', title: 'View larger', onclick: () => openViewer({ src, file: a, message: { from: d.from, author: d.author, createdAt: d.createdAt } }) },
+          h('img', { src, alt: f.name, draggable: 'false' }),
+        )
+      : h('span', { class: 'att-icon' }, fileLabel(f.name));
+  return h(
+    'div',
+    { class: ['drop-row', !d.have && 'is-missing'] },
+    thumb,
+    h('div', { class: 'att-meta' }, h('span', { class: 'att-name', title: f.name }, f.name), h('small', null, `${note} · ${who}`)),
+    h(
+      'div',
+      { class: 'att-actions' },
+      d.have ? h('button', { type: 'button', class: 'chip', onclick: () => openAttachment(a) }, 'Open') : null,
+      d.have ? h('button', { type: 'button', class: 'chip', onclick: () => saveAttachment(a) }, 'Save a copy') : null,
+      h('button', { type: 'button', class: 'chip is-quiet', onclick: () => removeDrop(d) }, 'Remove'),
+    ),
+  );
+}
+
+async function removeDrop(d) {
+  try {
+    await okv.removeDrop({ id: d.id });
+    toast(`Took ${d.file.name} out of the Drop box`, {
+      label: 'Undo',
+      run: () =>
+        okv
+          .removeDrop({ id: d.id, undo: true })
+          .then(refreshDrops)
+          .catch((err) => toast(errText(err))),
+    });
+    refreshDrops();
+  } catch (err) {
+    toast(errText(err));
+  }
+}
+
+/**
+ * Sends a file spiralling into the black hole. `at` is where it was let go, in the hole's own coordinates
+ * (or null to start from the bottom edge); `n` staggers several files so they go in one after another.
+ */
+function feedHole(name, file, at, n) {
+  const box = el.hole.getBoundingClientRect();
+  const url = IMAGE_TYPES.includes(file.type) ? URL.createObjectURL(file) : null;
+  const morsel = h('div', { class: 'hole-morsel' }, url ? h('img', { src: url, alt: '', draggable: 'false' }) : fileLabel(name));
+  el.holeFx.append(morsel);
+  const done = () => {
+    morsel.remove();
+    if (url) URL.revokeObjectURL(url);
+  };
+  const delay = Math.min(n, 8) * 150;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    morsel.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 350, delay, fill: 'both' }).finished.then(done, done);
+    return;
+  }
+  const from = at || { x: box.width / 2, y: box.height - 24 };
+  // Offsets from the hole's centre, which is where a morsel sits before it is moved.
+  const x0 = Math.max(-box.width / 2, Math.min(box.width / 2, from.x - box.width / 2));
+  const y0 = Math.max(-box.height / 2, Math.min(box.height / 2, from.y - box.height / 2));
+  const radius = Math.hypot(x0, y0);
+  const angle = Math.atan2(y0, x0);
+  const steps = 16;
+  const frames = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const r = radius * (1 - t ** 1.6); // slowly at first, then faster and faster
+    const a = angle + t * Math.PI * 3.2; // one and a half turns on the way in
+    frames.push({
+      transform: `translate(${(r * Math.cos(a)).toFixed(1)}px, ${(r * Math.sin(a)).toFixed(1)}px) rotate(${(t * 620).toFixed(0)}deg) scale(${(1 - 0.97 * t ** 1.4).toFixed(3)})`,
+      opacity: t > 0.9 ? 0 : 1,
+      offset: t,
+    });
+  }
+  morsel.animate(frames, { duration: 1000, delay, easing: 'cubic-bezier(0.45, 0, 0.8, 0.6)', fill: 'both' }).finished.then(done, done);
+  setTimeout(() => {
+    el.hole.classList.add('is-fed');
+    setTimeout(() => el.hole.classList.remove('is-fed'), 700);
+  }, delay + 820);
+}
+
+/** Puts dropped (or chosen) files in the Drop box, one at a time so each is checked, and can be refused, on its own. */
+async function dropIntoHole(fileList, at) {
+  const picked = [...fileList];
+  if (!picked.length || !state.settings.department) return;
+  if (picked.length > state.maxDrops) {
+    toast(`Only the first ${state.maxDrops} files went in. Drop the rest in a second go.`);
+    picked.length = state.maxDrops;
+  }
+  const problems = [];
+  let added = 0;
+  let lastName = '';
+  for (const file of picked) {
+    const name = fileNameOf(file);
+    try {
+      if (state.blockedExt.has(fileExt(name))) throw new Error(`“${name}” can’t be shared: programs, scripts, web pages and macro files aren’t allowed.`);
+      if (file.size === 0) throw new Error(`“${name}” is empty.`);
+      if (file.size > state.fileMaxBytes) throw new Error(`“${name}” is ${formatSize(file.size)}. The limit is ${formatSize(state.fileMaxBytes)}.`);
+      const data = await file.arrayBuffer();
+      const head = new Uint8Array(data, 0, Math.min(2, data.byteLength));
+      if (head[0] === 0x4d && head[1] === 0x5a) throw new Error(`“${name}” is a program, which can’t be shared.`);
+      await okv.addDrop({ name, data });
+      feedHole(name, file, at, added);
+      added++;
+      lastName = name;
+    } catch (err) {
+      problems.push(errText(err));
+    }
+  }
+  if (problems.length) {
+    const others = problems.length > 1 ? ` ${problems.length - 1} more couldn’t be added either.` : '';
+    toast(`${problems[0]}${others}${added ? ` The ${added === 1 ? 'other file is' : `other ${added} files are`} in the Drop box.` : ''}`);
+  } else if (added) {
+    toast(added === 1 ? `${lastName} is in the Drop box` : `${added} files are in the Drop box`);
+  }
+  if (added) refreshDrops();
+}
+
+let holeDepth = 0;
+const carriesFiles = (e) => Boolean(e.dataTransfer) && [...e.dataTransfer.types].includes('Files');
+
+function holeAwake(on) {
+  el.hole.classList.toggle('is-over', on);
+  el.holeLabel.textContent = on ? 'Let go to feed the hole' : 'Drag files and pictures here';
+}
+
+// Anywhere on this screen will do, not just the hole itself.
+el.dropbox.addEventListener('dragenter', (e) => {
+  if (!carriesFiles(e)) return;
+  e.preventDefault();
+  holeDepth++;
+  holeAwake(true);
+});
+el.dropbox.addEventListener('dragover', (e) => {
+  if (!carriesFiles(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+el.dropbox.addEventListener('dragleave', (e) => {
+  if (!carriesFiles(e)) return;
+  holeDepth = Math.max(0, holeDepth - 1);
+  if (!holeDepth) holeAwake(false);
+});
+el.dropbox.addEventListener('drop', (e) => {
+  if (!carriesFiles(e)) return;
+  e.preventDefault();
+  e.stopPropagation(); // it goes in the hole, not in the chat
+  holeDepth = 0;
+  holeAwake(false);
+  const box = el.hole.getBoundingClientRect();
+  dropIntoHole(e.dataTransfer.files, { x: e.clientX - box.left, y: e.clientY - box.top });
+});
+
+const chooseDropFiles = () => el.dropInput.click();
+el.hole.addEventListener('click', chooseDropFiles);
+el.hole.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    chooseDropFiles();
+  }
+});
+el.dropChoose.addEventListener('click', chooseDropFiles);
+el.dropInput.addEventListener('change', () => {
+  dropIntoHole(el.dropInput.files, null);
+  el.dropInput.value = '';
+});
+el.openDropbox.addEventListener('click', () => showScreen('dropbox'));
+el.closeDropbox.addEventListener('click', () => showScreen(state.section));
 
 // ---------- GIFs ----------
 
@@ -2601,7 +2844,7 @@ document.addEventListener('keydown', (e) => {
       // closed a menu, the notice box or an edit in progress
     } else if (!el.searchBox.hidden) closeSearch();
     else if (state.reply && state.screen === 'board') clearReply();
-    else if (state.screen === 'settings') showScreen(state.section);
+    else if (state.screen === 'settings' || state.screen === 'dropbox') showScreen(state.section);
     else if (state.settings.department) setExpanded(false);
     e.preventDefault();
   } else if (e.key === 'f' && e.ctrlKey && state.screen === 'board') {
@@ -2647,13 +2890,15 @@ okv.onGifReady(() => {
 okv.onFileReady(() => {
   if (state.settings.department && state.screen === 'board') refresh();
   if (state.screen === 'media') refreshMedia();
+  if (state.screen === 'dropbox') refreshDrops();
 });
 
-okv.onUnread(({ count, urgent, reminders, medications }) => {
+okv.onUnread(({ count, urgent, reminders, medications, drops }) => {
   state.unread = count;
   state.hasUrgentUnread = urgent;
   state.remSummary = reminders;
   state.medSummary = medications;
+  state.dropSummary = drops || { unseen: 0 };
   renderBadge();
 });
 
@@ -2669,6 +2914,17 @@ okv.onRemindersChanged(({ alert }) => {
   }
 });
 
+// Another computer put a file in the Drop box, or took one out.
+okv.onDropsChanged(({ fresh = [] }) => {
+  if (state.screen === 'dropbox') {
+    refreshDrops();
+    if (state.expanded) okv.markDropsSeen();
+  } else if (fresh.length) {
+    if (!state.expanded) bump();
+    else toast(`${deptLabel(fresh[0].from)} added ${fresh.length === 1 ? fresh[0].name : `${fresh.length} files`} to the Drop box`);
+  }
+});
+
 // A medication request was logged, ticked off or changed, here or on another computer.
 okv.onMedicationsChanged(({ alert, done = [], requests = [] }) => {
   if (alert === 'done') {
@@ -2679,7 +2935,7 @@ okv.onMedicationsChanged(({ alert, done = [], requests = [] }) => {
   } else if (alert) {
     chime(false);
     if (!state.expanded) bump();
-    else if (state.screen !== 'medications') toast(`New medication request: ${listNames(requests)}`);
+    else if (state.screen !== 'medications') toast(`New medication request: ${listNames(requests)}`, null, 'blue');
   }
   if (state.screen === 'medications') {
     refreshMedications();
@@ -2726,6 +2982,9 @@ async function init() {
     hasUrgentUnread: s.unread.urgent,
     remSummary: s.unread.reminders,
     medSummary: s.unread.medications,
+    dropSummary: s.unread.drops || { unseen: 0 },
+    maxDrops: s.maxDrops || state.maxDrops,
+    dropRetention: s.dropRetentionDays || state.dropRetention,
     peers: s.peers,
     update: s.update,
     newSince: s.lastReadAt,

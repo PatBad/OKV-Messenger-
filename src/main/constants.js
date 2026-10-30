@@ -17,6 +17,9 @@ const RETENTION_DAYS = 14;
 // Files and images attached to messages are kept (and shown in the Media tab) for this long, then archived.
 const ATTACHMENT_RETENTION_DAYS = 7;
 
+// Files dropped into the Drop box (the black hole) are shared with every computer and kept this long, then archived.
+const DROP_RETENTION_DAYS = 14;
+
 // How long after sending a message its sender may still edit it.
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
@@ -88,6 +91,8 @@ const LIMITS = {
   FILE_BYTES: 15 * 1024 * 1024,
   MAX_ATTACHMENTS: 5,
   ATTACH_TOTAL_BYTES: 40 * 1024 * 1024,
+  // Most files that can be dropped into the Drop box in one go.
+  MAX_DROPS: 20,
   FILE_NAME: 120,
   AUTHOR: 40,
   HOST: 64,
@@ -105,6 +110,7 @@ module.exports = {
   REACTIONS,
   RETENTION_DAYS,
   ATTACHMENT_RETENTION_DAYS,
+  DROP_RETENTION_DAYS,
   EDIT_WINDOW_MS,
   DEFAULT_QUICK_MESSAGES,
   MAX_QUICK_MESSAGES,

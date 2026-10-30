@@ -1299,6 +1299,13 @@ input[role='switch']:checked::after {
   pointer-events: auto;
 }
 
+.toast.is-long {
+  width: calc(100% - 32px);
+  white-space: normal;
+  text-align: center;
+  line-height: 1.4;
+}
+
 .toast-action {
   border: none;
   background: none;
@@ -2603,8 +2610,8 @@ button.msg-quote:hover {
 
 /* ---------- Medications ---------- */
 
-/* Blue is only ever used for "a medication request your team logged has been completed",
-   so it can't be mistaken for the red message count. */
+/* Blue is only ever used for medication notifications ("a new request to dispense" for the clinical team,
+   "a request your team logged has been completed" for everyone else), so it can't be mistaken for the red message count. */
 :root {
   --notify: #2563eb;
   --notify-soft: #e8effe;
@@ -2639,6 +2646,47 @@ button.msg-quote:hover {
   stroke-width: 3;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* A tick for "completed", a capsule for "a new request". */
+.badge-blue .blue-pill,
+.badge-blue.is-request .blue-tick {
+  display: none;
+}
+
+.badge-blue.is-request .blue-pill {
+  display: inline;
+}
+
+.badge-blue.is-request svg {
+  stroke-width: 2.4;
+}
+
+/* A new request keeps asking for attention: a soft blue ring that spreads out from the bubble until someone looks. */
+.badge-blue.is-request {
+  animation: blue-ring 1.8s ease-out infinite;
+}
+
+@keyframes blue-ring {
+  0% { box-shadow: 0 0 0 2px #fff, 0 0 0 2px rgba(37, 99, 235, 0.55); }
+  70% { box-shadow: 0 0 0 2px #fff, 0 0 0 9px rgba(37, 99, 235, 0); }
+  100% { box-shadow: 0 0 0 2px #fff, 0 0 0 9px rgba(37, 99, 235, 0); }
+}
+
+/* Docked, only the half of the logo facing into the screen shows, and the red badge takes the top of it,
+   so the blue one sits underneath on the same side. */
+body.dock-left .badge-blue {
+  top: auto;
+  bottom: -3px;
+  left: auto;
+  right: -3px;
+}
+
+body.dock-right .badge-blue {
+  top: auto;
+  bottom: -3px;
+  left: -3px;
+  right: auto;
 }
 
 .tab-short {
@@ -3006,4 +3054,320 @@ button.med-tick:focus-visible {
 .med.is-wait-red .med-wait {
   background: var(--urgent);
   color: var(--bg);
+}
+
+/* ---------- Drop box: the black hole ---------- */
+
+.dropbox-btn {
+  position: relative;
+}
+
+.icon-badge {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--on-primary, #fff);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 15px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--bg);
+  pointer-events: none;
+}
+
+.dropbox-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px 14px;
+}
+
+/* The hole is always dark, in light mode and dark mode alike: it is a window onto space. */
+.hole {
+  --hole-size: 84px;
+  position: relative;
+  height: 210px;
+  border-radius: 16px;
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse at 50% 50%, #170a2e 0%, #090514 55%, #02010a 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 6px 18px rgba(2, 1, 10, 0.4);
+  cursor: pointer;
+  user-select: none;
+  perspective: 700px;
+  transition: box-shadow 0.25s ease;
+}
+
+.hole:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+/* A sprinkling of stars, drifting slowly round. */
+.hole-stars {
+  position: absolute;
+  inset: -40%;
+  z-index: -1;
+  background-image:
+    radial-gradient(1.2px 1.2px at 12% 18%, #fff, transparent 60%),
+    radial-gradient(1px 1px at 27% 72%, #cbd5ff, transparent 60%),
+    radial-gradient(1.4px 1.4px at 41% 33%, #fff, transparent 60%),
+    radial-gradient(1px 1px at 58% 84%, #ffe9c7, transparent 60%),
+    radial-gradient(1.3px 1.3px at 66% 14%, #fff, transparent 60%),
+    radial-gradient(1px 1px at 79% 57%, #cbd5ff, transparent 60%),
+    radial-gradient(1.2px 1.2px at 91% 27%, #fff, transparent 60%),
+    radial-gradient(1px 1px at 8% 90%, #ffe9c7, transparent 60%),
+    radial-gradient(1.1px 1.1px at 49% 6%, #fff, transparent 60%),
+    radial-gradient(1px 1px at 86% 91%, #fff, transparent 60%),
+    radial-gradient(1px 1px at 33% 52%, #cbd5ff, transparent 60%),
+    radial-gradient(1.3px 1.3px at 72% 38%, #fff, transparent 60%);
+  opacity: 0.85;
+  animation: hole-drift 120s linear infinite;
+}
+
+/* Light bent round the hole. */
+.hole-halo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(var(--hole-size) * 2.5);
+  height: calc(var(--hole-size) * 2.5);
+  margin: calc(var(--hole-size) * -1.25) 0 0 calc(var(--hole-size) * -1.25);
+  border-radius: 50%;
+  background: radial-gradient(circle, transparent 28%, rgba(255, 170, 70, 0.55) 34%, rgba(255, 90, 140, 0.28) 44%, rgba(124, 58, 237, 0.14) 58%, transparent 72%);
+  filter: blur(3px);
+  animation: hole-breathe 4.5s ease-in-out infinite;
+}
+
+/* The accretion disk: a ring of glowing gas, seen edge-on-ish and always turning. */
+.hole-disk {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(var(--hole-size) * 3.6);
+  height: calc(var(--hole-size) * 3.6);
+  margin: calc(var(--hole-size) * -1.8) 0 0 calc(var(--hole-size) * -1.8);
+  transform: rotateX(72deg) rotateZ(-14deg);
+}
+
+.hole-disk-spin {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, #fff4d6, #ffb347, #ff4d7a, #7c3aed, #2b3fd9, #7c3aed, #ff4d7a, #ffb347, #fff4d6);
+  -webkit-mask-image: radial-gradient(circle, transparent 24%, #000 27%, rgba(0, 0, 0, 0.9) 36%, transparent 49%);
+  mask-image: radial-gradient(circle, transparent 24%, #000 27%, rgba(0, 0, 0, 0.9) 36%, transparent 49%);
+  filter: blur(0.6px) saturate(1.2);
+  animation: hole-spin 7s linear infinite;
+}
+
+/* The black itself, ringed by a thin line of white-hot light. */
+.hole-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--hole-size);
+  height: var(--hole-size);
+  margin: calc(var(--hole-size) / -2) 0 0 calc(var(--hole-size) / -2);
+  border-radius: 50%;
+  background: #000;
+  box-shadow:
+    0 0 0 2px rgba(255, 224, 170, 0.9),
+    0 0 14px 4px rgba(255, 150, 60, 0.55),
+    0 0 34px 12px rgba(0, 0, 0, 0.95),
+    inset 0 0 18px 6px #000;
+  transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.hole-label {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+  margin: 0;
+  text-align: center;
+  color: rgba(235, 230, 255, 0.85);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 6px #000;
+  pointer-events: none;
+}
+
+.hole-fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Something is being dragged over it: it wakes up and leans in. */
+.hole.is-over {
+  box-shadow: inset 0 0 0 2px #ffb347, 0 0 26px rgba(255, 140, 60, 0.55);
+}
+
+.hole.is-over .hole-core {
+  transform: scale(1.22);
+}
+
+.hole.is-over .hole-disk-spin {
+  animation-duration: 1.6s;
+}
+
+.hole.is-over .hole-halo {
+  animation-duration: 1.2s;
+}
+
+.hole.is-over .hole-label {
+  color: #ffd9a0;
+}
+
+/* It has just swallowed something. */
+.hole.is-fed .hole-core {
+  animation: hole-gulp 0.6s ease-out;
+}
+
+.hole.is-fed .hole-halo {
+  animation: hole-flare 0.7s ease-out;
+}
+
+/* A file on its way in (see feedHole in app.js). */
+.hole-morsel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #e7e3ff;
+  color: #4c1d95;
+  font-size: 10.5px;
+  font-weight: 800;
+  box-shadow: 0 0 12px rgba(255, 180, 90, 0.7);
+  will-change: transform, opacity;
+}
+
+.hole-morsel img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+@keyframes hole-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes hole-drift {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes hole-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.07); opacity: 1; }
+}
+
+@keyframes hole-gulp {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+@keyframes hole-flare {
+  0% { transform: scale(1); opacity: 1; }
+  25% { transform: scale(1.3); opacity: 1; filter: blur(3px) brightness(1.7); }
+  100% { transform: scale(1); opacity: 0.9; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole-stars,
+  .hole-halo,
+  .hole-disk-spin {
+    animation: none;
+  }
+}
+
+.dropbox-hint {
+  margin: 10px 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.dropbox-body .media-heading {
+  margin-top: 14px;
+}
+
+.dropbox-body .media-note {
+  border-top: none;
+  padding: 10px 2px 0;
+}
+
+.drop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.drop-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.drop-row.is-missing {
+  opacity: 0.65;
+}
+
+.drop-thumb {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+  flex: none;
+}
+
+.drop-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.drop-empty {
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.drop-empty strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text);
+}
+
+.drop-row {
+  flex-wrap: wrap;
+}
+
+.drop-row .att-actions {
+  flex-basis: 100%;
+  justify-content: flex-end;
 }
