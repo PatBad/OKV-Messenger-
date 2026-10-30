@@ -74,6 +74,7 @@ class Network extends EventEmitter {
     reactions = null,
     reminders = null,
     medications = null,
+    drops = null,
     appointments = null,
     edits = null,
     receipts = null,
@@ -82,6 +83,7 @@ class Network extends EventEmitter {
     gifs = null,
     files = null,
     fileRetentionDays = null,
+    dropRetentionDays = null,
     shouldFetch = null,
     peerId,
     getProfile,
@@ -113,6 +115,9 @@ class Network extends EventEmitter {
     if (medications) {
       this.collections.push({ name: 'medications', store: medications, prefix: '/medications', key: 'records', beacon: 'md' });
     }
+    if (drops) {
+      this.collections.push({ name: 'drops', store: drops, prefix: '/drops', key: 'records', beacon: 'dr' });
+    }
     if (appointments) {
       this.collections.push({ name: 'appointments', store: appointments, prefix: '/appointments', key: 'records', beacon: 'ap' });
     }
@@ -129,6 +134,9 @@ class Network extends EventEmitter {
     if (files) this.blobs.files = { store: files, max: LIMITS.FILE_BYTES, type: 'application/octet-stream' };
     // Attached files are only kept for this many days, so none are fetched for older messages.
     this.fileRetentionDays = fileRetentionDays;
+    // Files in the Drop box come the same way, and are kept for their own number of days.
+    this.drops = drops;
+    this.dropRetentionDays = dropRetentionDays;
     // Lets the app say a message's files are no longer wanted (e.g. it was deleted for everyone).
     this.shouldFetch = shouldFetch;
     this.wanted = new Map(); // fingerprint -> { kind: 'gifs' | 'files', createdAt }
@@ -154,12 +162,15 @@ class Network extends EventEmitter {
     for (const c of this.collections) c.store.on('added', this._onStoreAdded);
     this._onMessagesAdded = (messages) => this._wantBlobs(messages);
     store.on('added', this._onMessagesAdded);
+    this._onDropsAdded = (records) => this._wantDropFiles(records);
+    if (drops) drops.on('added', this._onDropsAdded);
   }
 
   async start() {
     await this._startHttp();
     await this._startUdp();
     this._wantBlobs(this.store.sorted || []);
+    if (this.drops) this._wantDropFiles(this.drops.all());
     this.timers.push(setInterval(() => this._tick(), this.beaconIntervalMs));
     return this;
   }
@@ -170,6 +181,7 @@ class Network extends EventEmitter {
     clearTimeout(this._beaconSoonTimer);
     for (const c of this.collections) c.store.off('added', this._onStoreAdded);
     this.store.off('added', this._onMessagesAdded);
+    if (this.drops) this.drops.off('added', this._onDropsAdded);
     clearTimeout(this._fetchBlobsTimer);
     if (this.udp) this.udp.close();
     if (this.server) this.server.close();
@@ -350,6 +362,19 @@ class Network extends EventEmitter {
 
   // ---------- GIFs and attached files ----------
 
+  /** Notes which files just put in the Drop box this computer doesn't have yet, and goes to get them. */
+  _wantDropFiles(records) {
+    if (!this.blobs.files || !this.dropRetentionDays) return;
+    let any = false;
+    for (const r of records) {
+      if (r.type !== 'drop' || this.blobs.files.store.has(r.file.hash)) continue;
+      if (dayOf(r.createdAt) < dayOf(Date.now() - this.dropRetentionDays * 86400000)) continue;
+      this.wanted.set(r.file.hash, { kind: 'files', createdAt: r.createdAt, days: this.dropRetentionDays });
+      any = true;
+    }
+    if (any) this._fetchBlobsSoon();
+  }
+
   /** Notes which of these messages' GIFs and files this computer doesn't have yet, and goes to get them. */
   _wantBlobs(messages) {
     const cutoff = this.fileRetentionDays ? dayOf(Date.now() - this.fileRetentionDays * 86400000) : null;
@@ -384,9 +409,10 @@ class Network extends EventEmitter {
     if (this._fetchingBlobs || this.stopped) return;
     this._fetchingBlobs = true;
     try {
-      const cutoff = this.fileRetentionDays ? dayOf(Date.now() - this.fileRetentionDays * 86400000) : null;
-      for (const [hash, { kind, createdAt }] of [...this.wanted]) {
+      for (const [hash, { kind, createdAt, days }] of [...this.wanted]) {
         const blob = this.blobs[kind];
+        const keepDays = days || this.fileRetentionDays;
+        const cutoff = keepDays ? dayOf(Date.now() - keepDays * 86400000) : null;
         if (!blob || blob.store.has(hash) || (kind === 'files' && cutoff && dayOf(createdAt) < cutoff)) {
           this.wanted.delete(hash); // already here, or too old to be worth fetching now
           continue;

@@ -11,6 +11,7 @@ const {
   GIF_PLACEHOLDER,
   ATTACH_PLACEHOLDER,
   ATTACHMENT_RETENTION_DAYS,
+  DROP_RETENTION_DAYS,
   REACTIONS,
   RETENTION_DAYS,
   EDIT_WINDOW_MS,
@@ -31,6 +32,7 @@ const {
   ReactionLog,
   ReminderLog,
   MedicationLog,
+  DropLog,
   EditLog,
   ReceiptLog,
   PinLog,
@@ -95,6 +97,7 @@ let files; // attached files and images, named by fingerprint
 let reactions; // emoji reactions, shared with the other computers
 let reminders; // reminders and their done/cancelled history, shared
 let medications; // repeat-medication requests and their done/cancelled history, shared
+let drops; // files put into the Drop box (the black hole), and taking them out again, shared
 let appointments = null; // the appointment schedule, shared (only for brands that have one)
 let scheduleWin = null; // the schedule window, when it is open
 let edits; // corrections to message text, shared
@@ -167,12 +170,14 @@ async function start() {
   reactions = new ReactionLog(historyDir).load();
   reminders = new ReminderLog(historyDir).load();
   medications = new MedicationLog(historyDir).load();
+  drops = new DropLog(historyDir).load();
   appointments = APPOINTMENTS ? new AppointmentLog(historyDir).load() : null;
   edits = new EditLog(historyDir).load();
   receipts = new ReceiptLog(historyDir).load();
   pins = new PinLog(historyDir).load();
   // Everything older than the retention period is archived, on every computer alike.
   for (const history of [store, deletions, reactions, edits, receipts]) history.retentionDays = RETENTION_DAYS;
+  drops.retentionDays = DROP_RETENTION_DAYS;
   tidyUp();
   setInterval(tidyUp, 6 * 3600 * 1000);
   reminderHides = new LocalHides(historyDir, 'hidden-reminders.jsonl').load();
@@ -183,6 +188,7 @@ async function start() {
   reactions.on('added', onMessagesChanged);
   reminders.on('added', onRemindersAdded);
   medications.on('added', onMedicationsAdded);
+  drops.on('added', onDropsAdded);
   if (appointments) appointments.on('added', onAppointmentsAdded);
   edits.on('added', onMessagesChanged);
   receipts.on('added', (added) => {
@@ -206,6 +212,7 @@ async function start() {
     reactions,
     reminders,
     medications,
+    drops,
     appointments,
     edits,
     receipts,
@@ -214,6 +221,7 @@ async function start() {
     gifs,
     files,
     fileRetentionDays: ATTACHMENT_RETENTION_DAYS,
+    dropRetentionDays: DROP_RETENTION_DAYS,
     shouldFetch: (m) => !deletions.isDeleted(m),
     peerId: config.get('peerId'),
     getProfile: () => ({ department: config.get('department'), host: HOST }),
@@ -543,9 +551,10 @@ function unread() {
     urgent: false,
     reminders: { open: 0, overdue: 0, unseen: 0, unseenDue: false },
     medications: { open: 0, requests: 0, completed: 0 },
+    drops: { unseen: 0 },
   };
   if (!store || !config.get('department')) return empty;
-  return { ...store.unread({ ...unreadContext(), exclude: isRemoved }), reminders: reminderSummary(), medications: medicationSummary() };
+  return { ...store.unread({ ...unreadContext(), exclude: isRemoved }), reminders: reminderSummary(), medications: medicationSummary(), drops: dropSummary() };
 }
 
 function sendUnread() {
@@ -626,6 +635,8 @@ function tidyUp() {
     for (const m of store.sorted) {
       if (m.attachments && dayKey(m.createdAt) >= fileCutoff && !deletions.isDeleted(m)) for (const a of m.attachments) keepFiles.add(a.hash);
     }
+    const messageFiles = new Set(keepFiles);
+    for (const r of drops.all()) keepFiles.add(r.file.hash); // files in the Drop box stay until their own retention is up
     let filesTidied = 0;
     for (const m of store.sorted) {
       if (!m.attachments) continue;
@@ -645,6 +656,14 @@ function tidyUp() {
     for (const m of old) if (m.gif && !stillUsed.has(m.gif.hash)) (deleted(m) ? discardGifs : archiveGifs).add(m.gif.hash);
     for (const hash of archiveGifs) gifs.archive(hash);
     for (const hash of discardGifs) if (!archiveGifs.has(hash)) gifs.remove(hash);
+
+    // The Drop box: files past DROP_RETENTION_DAYS go, unless a message still on the board uses the same file.
+    const oldDrops = drops.archiveOld(now, { drop: () => true }).filter((r) => r.type === 'drop');
+    if (oldDrops.length) {
+      const inUse = new Set(messageFiles);
+      for (const r of drops.all()) inUse.add(r.file.hash);
+      for (const r of oldDrops) if (!inUse.has(r.file.hash) && files.remove(r.file.hash)) filesTidied++;
+    }
 
     let other = 0;
     for (const history of [deletions, reactions, edits, receipts]) other += history.archiveOld(now, { drop: () => true }).length;
@@ -1124,6 +1143,8 @@ ipcMain.handle('get-state', () => ({
   maxAttachments: LIMITS.MAX_ATTACHMENTS,
   attachTotalBytes: LIMITS.ATTACH_TOTAL_BYTES,
   attachmentRetentionDays: ATTACHMENT_RETENTION_DAYS,
+  dropRetentionDays: DROP_RETENTION_DAYS,
+  maxDrops: LIMITS.MAX_DROPS,
   blockedExtensions: [...BLOCKED_EXTENSIONS],
   gifMaxBytes: LIMITS.GIF_BYTES,
   editWindowMs: EDIT_WINDOW_MS,
@@ -1377,6 +1398,88 @@ ipcMain.handle('medications-clear-done', () => {
 // The Medications tab has been looked at: clears the "new request" and blue "completed" notifications.
 ipcMain.handle('medications-seen', () => {
   config.set({ medicationsSeenAt: Date.now() });
+  sendUnread();
+});
+
+// ---------- Drop box ----------
+
+/** A file in the Drop box as the page sees it. */
+function dropView(r) {
+  return { ...toWire(r), local: Boolean(r.local), have: files.has(r.file.hash) };
+}
+
+/** Files other computers have put in the Drop box (and not taken out again) since this one last looked. */
+function dropSummary() {
+  const seenAt = config.get('dropsSeenAt') || 0;
+  const since = config.get('firstRunAt');
+  let unseen = 0;
+  for (const r of drops.all()) {
+    if (!r.local && r.receivedAt > seenAt && r.createdAt >= since && !drops.removal(r)) unseen++;
+  }
+  return { unseen };
+}
+
+function onDropsAdded(added) {
+  const since = config.get('firstRunAt');
+  const fresh = added.filter((r) => r.type === 'drop' && !r.local && r.createdAt >= since);
+  send('drops-changed', { fresh: fresh.map((r) => ({ from: r.from, name: r.file.name })) });
+  sendUnread();
+}
+
+// The Drop box, newest first. Files that have been taken out are left off.
+ipcMain.handle('drops-list', () =>
+  drops
+    .all()
+    .filter((r) => !drops.removal(r))
+    .sort((a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : -1))
+    .map(dropView),
+);
+
+// Puts one file in the Drop box. The page sends them one at a time so each can be checked, and refused, on its own.
+ipcMain.handle('drop-add', (_e, input = {}) => {
+  const department = config.get('department');
+  if (!department) throw new Error('Choose a department first');
+  const data = Buffer.from((input && input.data) || []);
+  const file = files.add(data, input && input.name); // throws a message fit to show if it's empty, too big or not allowed
+  const author = config.get('author') || '';
+  const [record] = drops.add(
+    [{ type: 'drop', id: crypto.randomUUID(), from: department, file, author, host: HOST, createdAt: Date.now() }],
+    { local: true },
+  );
+  if (!record) throw new Error('That file couldn’t be added');
+  if (network) network.pushNow([toWire(record)], 'drops');
+  return dropView(record);
+});
+
+// Takes a file out of the Drop box for everyone, or with `undo` puts it back.
+ipcMain.handle('drop-remove', (_e, { id, undo } = {}) => {
+  const target = typeof id === 'string' ? drops.drops.get(id) : null;
+  if (!target) throw new Error('That file isn’t in the Drop box');
+  const department = config.get('department');
+  if (!department) throw new Error('Choose a department first');
+  const [record] = drops.add(
+    [
+      {
+        type: 'status',
+        id: crypto.randomUUID(),
+        target: id,
+        status: undo ? 'open' : 'removed',
+        by: department,
+        byName: config.get('author') || '',
+        host: HOST,
+        createdAt: Date.now(),
+      },
+    ],
+    { local: true },
+  );
+  if (!record) throw new Error('That couldn’t be done');
+  if (network) network.pushNow([toWire(record)], 'drops');
+  sendUnread();
+});
+
+// The Drop box has been looked at.
+ipcMain.handle('drops-seen', () => {
+  config.set({ dropsSeenAt: Date.now() });
   sendUnread();
 });
 
