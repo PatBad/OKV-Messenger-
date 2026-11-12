@@ -9,11 +9,12 @@ const dayOf = (ts) => new Date(ts).toISOString().slice(0, 10);
  * isRemoved    true for messages that are deleted or hidden, whose media must not show
  * hasFile      whether this computer holds an attached file (by fingerprint)
  * hasGif       likewise for a GIF
+ * loadState    for a hash this computer doesn't have: null, 'loading' or 'failed' (see Network.blobState)
  * retentionDays  attached files older than this many days are archived (so they're listed as such)
  * filter       'all', 'images' (pictures and GIFs) or 'files'
  * search       matches a file name or the sender's name
  */
-function listMedia(messages, { isRemoved = () => false, hasFile = () => true, hasGif = () => true, retentionDays = 7, filter = 'all', search = '', now = Date.now(), limit = 300 } = {}) {
+function listMedia(messages, { isRemoved = () => false, hasFile = () => true, hasGif = () => true, loadState = () => null, retentionDays = 7, filter = 'all', search = '', now = Date.now(), limit = 300 } = {}) {
   const cutoff = dayOf(now - retentionDays * 86400000);
   const needle = search.trim().toLowerCase();
   const all = [];
@@ -22,8 +23,13 @@ function listMedia(messages, { isRemoved = () => false, hasFile = () => true, ha
     if (!m.gif && !m.attachments) continue;
     if (isRemoved(m)) continue;
     const base = { messageId: m.id, from: m.from, author: m.author, to: m.to, createdAt: m.createdAt };
-    if (m.gif) all.push({ ...base, key: `${m.id}:${m.gif.hash}`, kind: 'gif', name: 'GIF', hash: m.gif.hash, size: m.gif.size, w: m.gif.w, h: m.gif.h, present: hasGif(m.gif.hash), archived: false });
+    if (m.gif) {
+      const present = hasGif(m.gif.hash);
+      all.push({ ...base, key: `${m.id}:${m.gif.hash}`, kind: 'gif', name: 'GIF', hash: m.gif.hash, size: m.gif.size, w: m.gif.w, h: m.gif.h, present, load: present ? null : loadState(m.gif.hash), archived: false });
+    }
     for (const a of m.attachments || []) {
+      const present = hasFile(a.hash);
+      const archived = dayOf(m.createdAt) < cutoff;
       all.push({
         ...base,
         key: `${m.id}:${a.hash}`,
@@ -33,8 +39,9 @@ function listMedia(messages, { isRemoved = () => false, hasFile = () => true, ha
         size: a.size,
         w: a.w,
         h: a.h,
-        present: hasFile(a.hash),
-        archived: dayOf(m.createdAt) < cutoff,
+        present,
+        load: present || archived ? null : loadState(a.hash),
+        archived,
       });
     }
   }

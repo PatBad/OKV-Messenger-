@@ -324,9 +324,19 @@ class Network extends EventEmitter {
     });
   }
 
-  /** Downloads a file (up to maxBytes) from a computer; rejects on any non-200 answer. */
-  _requestBinary(peer, route, maxBytes) {
+  /**
+   * Downloads a file (up to maxBytes) from a computer; rejects on any non-200 answer. Gives up quickly on a
+   * computer that can't be connected to or doesn't start answering, and stops at once if `signal` is aborted.
+   */
+  _requestBinary(peer, route, maxBytes, signal) {
     return new Promise((resolve, reject) => {
+      if (signal && signal.aborted) return reject(new Error('cancelled'));
+      let startTimer = null;
+      const done = (fn, value) => {
+        clearTimeout(startTimer);
+        if (signal) signal.removeEventListener('abort', onAbort);
+        fn(value);
+      };
       const req = http.request(
         {
           host: peer.address,
@@ -338,9 +348,10 @@ class Network extends EventEmitter {
           headers: { [HEADER]: NETWORK.APP_ID },
         },
         (res) => {
+          clearTimeout(startTimer);
           if (res.statusCode !== 200) {
             res.resume();
-            reject(new Error(`HTTP ${res.statusCode}`));
+            done(reject, new Error(`HTTP ${res.statusCode}`));
             return;
           }
           const chunks = [];
@@ -350,17 +361,62 @@ class Network extends EventEmitter {
             if (size > maxBytes) req.destroy(new Error('file too large'));
             else chunks.push(c);
           });
-          res.on('end', () => resolve(Buffer.concat(chunks)));
-          res.on('error', reject);
+          res.on('end', () => done(resolve, Buffer.concat(chunks)));
+          res.on('error', (err) => done(reject, err));
         },
       );
+      const onAbort = () => req.destroy(new Error('cancelled'));
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+      // From asking until the first answer: connecting (3 s) plus the other computer starting to reply (5 s in all).
+      startTimer = setTimeout(() => req.destroy(new Error('no answer')), NETWORK.RESPONSE_TIMEOUT_MS);
+      req.once('socket', (socket) => {
+        if (!socket.connecting) return;
+        const connectTimer = setTimeout(() => req.destroy(new Error('could not connect')), NETWORK.CONNECT_TIMEOUT_MS);
+        socket.once('connect', () => clearTimeout(connectTimer));
+        req.once('close', () => clearTimeout(connectTimer));
+      });
       req.on('timeout', () => req.destroy(new Error('timeout')));
-      req.on('error', reject);
+      req.on('error', (err) => done(reject, err));
       req.end();
     });
   }
 
   // ---------- GIFs and attached files ----------
+
+  /** Adds a file to the wanted list, keeping when it was first wanted (so "couldn't load" is judged from the start). */
+  _want(hash, entry) {
+    if (!this.wanted.has(hash)) this.wanted.set(hash, { ...entry, since: Date.now(), failed: false });
+  }
+
+  /** null if there's nothing to wait for, 'loading' while it's on its way, 'failed' once no computer has supplied it for a while. */
+  blobState(hash) {
+    const w = this.wanted.get(hash);
+    return !w ? null : w.failed ? 'failed' : 'loading';
+  }
+
+  /** The Retry button: starts the wait afresh, forgets which computers were being skipped, and asks again now. */
+  retryBlob(hash) {
+    const w = this.wanted.get(hash);
+    if (!w) return;
+    w.since = Date.now();
+    w.failed = false;
+    this._blobTried?.delete(hash);
+    for (const peer of this.peerMap.values()) peer.blobSkipUntil = 0;
+    this._fetchBlobsSoon();
+    this.emit('blobs-changed');
+  }
+
+  /** Marks files that have been wanted for too long as failed, and says so. */
+  _sweepFailedBlobs() {
+    let any = false;
+    for (const w of this.wanted.values()) {
+      if (!w.failed && Date.now() - w.since >= NETWORK.BLOB_FAIL_MS) {
+        w.failed = true;
+        any = true;
+      }
+    }
+    if (any) this.emit('blobs-changed');
+  }
 
   /** Notes which files just put in the Drop box this computer doesn't have yet, and goes to get them. */
   _wantDropFiles(records) {
@@ -369,7 +425,7 @@ class Network extends EventEmitter {
     for (const r of records) {
       if (r.type !== 'drop' || this.blobs.files.store.has(r.file.hash)) continue;
       if (dayOf(r.createdAt) < dayOf(Date.now() - this.dropRetentionDays * 86400000)) continue;
-      this.wanted.set(r.file.hash, { kind: 'files', createdAt: r.createdAt, days: this.dropRetentionDays });
+      this._want(r.file.hash, { kind: 'files', createdAt: r.createdAt, days: this.dropRetentionDays });
       any = true;
     }
     if (any) this._fetchBlobsSoon();
@@ -382,13 +438,13 @@ class Network extends EventEmitter {
     for (const m of messages) {
       if (this.shouldFetch && !this.shouldFetch(m)) continue;
       if (m.gif && this.blobs.gifs && !this.blobs.gifs.store.has(m.gif.hash)) {
-        this.wanted.set(m.gif.hash, { kind: 'gifs', createdAt: m.createdAt });
+        this._want(m.gif.hash, { kind: 'gifs', createdAt: m.createdAt });
         any = true;
       }
       if (m.attachments && this.blobs.files && !(cutoff && dayOf(m.createdAt) < cutoff)) {
         for (const a of m.attachments) {
           if (this.blobs.files.store.has(a.hash)) continue;
-          this.wanted.set(a.hash, { kind: 'files', createdAt: m.createdAt });
+          this._want(a.hash, { kind: 'files', createdAt: m.createdAt });
           any = true;
         }
       }
@@ -397,6 +453,11 @@ class Network extends EventEmitter {
   }
 
   _fetchBlobsSoon() {
+    // A download round is already running: put any idle helper to work on what's just been asked for.
+    if (this._fetchingBlobs) {
+      this._startBlobWorkers();
+      return;
+    }
     if (this._fetchBlobsTimer || this.stopped) return;
     this._fetchBlobsTimer = setTimeout(() => {
       this._fetchBlobsTimer = null;
@@ -404,34 +465,90 @@ class Network extends EventEmitter {
     }, 150);
   }
 
-  /** Asks each known computer in turn for everything still missing; whatever can't be found is retried on the next tick. */
+  /**
+   * Fetches everything still missing, a few at a time. Whatever can't be found is retried on the next tick,
+   * and anything that becomes wanted while this is running is started straight away.
+   */
   async _fetchBlobs() {
     if (this._fetchingBlobs || this.stopped) return;
     this._fetchingBlobs = true;
-    try {
-      for (const [hash, { kind, createdAt, days }] of [...this.wanted]) {
-        const blob = this.blobs[kind];
-        const keepDays = days || this.fileRetentionDays;
-        const cutoff = keepDays ? dayOf(Date.now() - keepDays * 86400000) : null;
-        if (!blob || blob.store.has(hash) || (kind === 'files' && cutoff && dayOf(createdAt) < cutoff)) {
-          this.wanted.delete(hash); // already here, or too old to be worth fetching now
-          continue;
-        }
-        for (const peer of [...this.peerMap.values()]) {
-          if (this.stopped) return;
-          try {
-            const file = await this._requestBinary(peer, `/${kind}/${hash}`, blob.max);
-            blob.store.addVerified(hash, file);
-            this.wanted.delete(hash);
-            this.log.info(`received a ${kind === 'gifs' ? 'GIF' : 'file'} (${Math.round(file.length / 1024)} KB) from ${peer.host || peer.address}`);
-            break;
-          } catch {
-            // that computer doesn't have it (or is unreachable); try the next
+    this._blobTried = new Set(); // each is tried once per round; failures wait for the next tick
+    this._blobWorkers = 0;
+    await new Promise((resolve) => {
+      this._blobRoundDone = () => {
+        this._fetchingBlobs = false; // at once, so anything wanted from here on starts a fresh round
+        resolve();
+      };
+      this._startBlobWorkers();
+      if (!this._blobWorkers) this._blobRoundDone();
+    });
+  }
+
+  /** Starts helpers (up to BLOB_PARALLEL) for as long as there is something wanted that hasn't been tried this round. */
+  _startBlobWorkers() {
+    const next = () => {
+      for (const entry of this.wanted) if (!this._blobTried.has(entry[0])) return entry;
+      return null;
+    };
+    while (this._blobWorkers < NETWORK.BLOB_PARALLEL && !this.stopped && next()) {
+      this._blobWorkers++;
+      (async () => {
+        try {
+          for (let entry = next(); entry && !this.stopped; entry = next()) {
+            this._blobTried.add(entry[0]);
+            await this._fetchOne(...entry);
           }
+        } finally {
+          if (--this._blobWorkers === 0) this._blobRoundDone();
         }
+      })();
+    }
+  }
+
+  /**
+   * Gets one GIF or file by asking every computer at the same time and taking the first good answer, so a
+   * computer that has gone to sleep or left the network can't hold it up.
+   */
+  async _fetchOne(hash, { kind, createdAt, days }) {
+    const blob = this.blobs[kind];
+    const keepDays = days || this.fileRetentionDays;
+    const cutoff = keepDays ? dayOf(Date.now() - keepDays * 86400000) : null;
+    if (!blob || blob.store.has(hash) || (kind === 'files' && cutoff && dayOf(createdAt) < cutoff)) {
+      this.wanted.delete(hash); // already here, or too old to be worth fetching now
+      return;
+    }
+    const now = Date.now();
+    const peers = [...this.peerMap.values()].filter((p) => !(p.blobSkipUntil > now));
+    if (!peers.length) return;
+    const cancel = new AbortController();
+    try {
+      const { peer, file } = await Promise.any(
+        peers.map(async (peer) => {
+          const file = await this._download(peer, `/${kind}/${hash}`, blob.max, cancel.signal);
+          blob.store.addVerified(hash, file); // throws unless it's exactly the file that was asked for
+          return { peer, file };
+        }),
+      );
+      cancel.abort();
+      this.wanted.delete(hash);
+      this.log.info(`received a ${kind === 'gifs' ? 'GIF' : 'file'} (${Math.round(file.length / 1024)} KB) from ${peer.host || peer.address}`);
+    } catch {
+      // none of them has it yet; it stays wanted and is tried again
+    }
+  }
+
+  /** One download from one computer. A computer that can't be reached is left alone for a while; one that simply lacks the file isn't. */
+  async _download(peer, route, maxBytes, signal) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this._requestBinary(peer, route, maxBytes, signal);
+      } catch (err) {
+        if (signal.aborted) throw err;
+        // A kept-alive connection the other side had just closed: try again on a fresh one.
+        if (attempt === 0 && /ECONNRESET|socket hang up/.test(`${err.code} ${err.message}`)) continue;
+        if (!/^HTTP /.test(err.message)) peer.blobSkipUntil = Date.now() + NETWORK.PEER_SKIP_MS;
+        throw err;
       }
-    } finally {
-      this._fetchingBlobs = false;
     }
   }
 
@@ -617,6 +734,7 @@ class Network extends EventEmitter {
     const changed =
       isNew || peer.address !== address || peer.port !== info.port || peer.dept !== dept || peer.host !== host || peer.ver !== ver;
     Object.assign(peer, { address, port: info.port, dept, host, ver, lastSeen: Date.now() });
+    if (isNew) peer.blobSkipUntil = 0; // a computer that has just come (back) on the network is worth asking again
     if (changed) {
       if (isNew) this.log.info(`found ${peer.host} (${peer.address}:${peer.port})`);
       this.emit('peers', this.peers());
@@ -642,6 +760,7 @@ class Network extends EventEmitter {
     if (removed) this.emit('peers', this.peers());
     this._sendBeacon('hello');
     for (const peer of this.peerMap.values()) this._maybeSync(peer);
+    this._sweepFailedBlobs();
     if (this.wanted.size) this._fetchBlobs();
   }
 }
