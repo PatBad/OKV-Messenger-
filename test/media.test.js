@@ -46,6 +46,22 @@ test('deleted and hidden messages never appear; missing files are marked not pre
   assert.equal(items.find((i) => i.name === 'x-ray.png').present, true);
 });
 
+test('a file or GIF not here yet carries its load state; present and archived ones never do', () => {
+  const states = { [att('Rota.xlsx', 'file', 4).hash]: 'failed', ['a'.repeat(64)]: 'loading', [att('Estimate.pdf', 'file', 1).hash]: 'loading' };
+  const { items } = listMedia(sample(), {
+    now: NOW,
+    retentionDays: 7,
+    hasFile: (h) => h !== att('Rota.xlsx', 'file', 4).hash && h !== att('Estimate.pdf', 'file', 1).hash,
+    hasGif: () => false,
+    loadState: (h) => states[h] || null,
+  });
+  const byName = Object.fromEntries(items.map((i) => [i.name, i]));
+  assert.equal(byName['Rota.xlsx'].load, 'failed');
+  assert.equal(byName.GIF.load, 'loading');
+  assert.equal(byName['Estimate.pdf'].load, null, 'archived files are not waited for');
+  assert.equal(byName['Bella scan.jpg'].load, null, 'a file this computer has is not waiting');
+});
+
 test('filters and search narrow the list, and the counts follow the search', () => {
   const messages = sample();
   assert.deepEqual(listMedia(messages, { now: NOW, filter: 'images' }).items.map((i) => i.name), ['Bella scan.jpg', 'GIF', 'x-ray.png']);

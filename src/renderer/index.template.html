@@ -101,6 +101,9 @@
           <div id="search-box" class="search-box" hidden>
             <input id="search" type="search" placeholder="Search messages" aria-label="Search messages" spellcheck="false" />
           </div>
+          <button id="toggle-prior-delete" class="icon-btn small" type="button" title="Delete all earlier days’ messages" aria-label="Delete all earlier days’ messages">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg>
+          </button>
           <button id="toggle-pin" class="icon-btn small" type="button" title="Pin a notice for everyone" aria-label="Pin a notice">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6Z"/></svg>
           </button>
@@ -114,6 +117,8 @@
           <button class="chip is-done" type="submit">Pin</button>
           <button id="pin-cancel" class="chip is-quiet" type="button">Cancel</button>
         </form>
+
+        <div id="prior-confirm" class="day-confirm prior-confirm" hidden></div>
 
         <div id="update-banner" class="banner" hidden>
           <span id="update-banner-text"></span>

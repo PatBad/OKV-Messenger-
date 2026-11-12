@@ -47,6 +47,16 @@ const NETWORK = {
   BEACON_INTERVAL_MS: 8000,
   PEER_TIMEOUT_MS: 45000,
   REQUEST_TIMEOUT_MS: 8000,
+  // Fetching a GIF or file: a computer that can't be connected to, or doesn't start answering, within these is
+  // given up on (and left alone for PEER_SKIP_MS) rather than holding everything else up.
+  CONNECT_TIMEOUT_MS: 3000,
+  RESPONSE_TIMEOUT_MS: 5000,
+  PEER_SKIP_MS: 30000,
+  // A GIF or picture that no computer has been able to supply for this long is reported as "couldn't load"
+  // (with a Retry button) instead of "on its way". It is still tried again in the background.
+  BLOB_FAIL_MS: 60000,
+  // How many GIFs/files are downloaded at the same time.
+  BLOB_PARALLEL: 3,
   MIN_SYNC_GAP_MS: 4000,
   MAX_BODY_BYTES: 8 * 1024 * 1024,
   CHUNK: 500,

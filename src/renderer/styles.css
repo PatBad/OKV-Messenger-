@@ -1633,6 +1633,107 @@ body.is-resizing * {
   font-size: 12px;
 }
 
+/* A picture or GIF that hasn't arrived yet (shimmering, with a spinner) or that no computer could supply (with Retry). */
+.msg-gif-wait.pic-loading,
+.msg-gif-wait.pic-failed,
+.att-image-wait.pic-loading,
+.att-image-wait.pic-failed {
+  height: auto;
+  min-width: 150px;
+  min-height: 90px;
+  max-width: 100%;
+  max-height: 240px;
+  box-sizing: border-box;
+  padding: 8px;
+  text-align: center;
+}
+
+.pic-loading {
+  grid-auto-flow: row;
+  align-content: center;
+  gap: 6px;
+  background: linear-gradient(100deg, var(--surface-2) 30%, var(--border) 50%, var(--surface-2) 70%);
+  background-size: 250% 100%;
+  animation: pic-shimmer 1.6s linear infinite;
+}
+
+.pic-failed {
+  align-content: center;
+  gap: 4px;
+  border: 1px dashed var(--border);
+}
+
+.pic-failed small {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.pic-failed .chip {
+  margin-top: 4px;
+}
+
+.pic-spinner {
+  justify-self: center;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--faint);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: pic-spin 0.8s linear infinite;
+}
+
+@keyframes pic-shimmer {
+  to {
+    background-position: -150% 0;
+  }
+}
+
+@keyframes pic-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The same two states on Media tiles and on file rows (messages, Media, Drop box). Two classes so they win over the plain tile/row backgrounds that come later. */
+.media-tile.pic-loading,
+.att-file.pic-loading,
+.drop-row.pic-loading {
+  background: linear-gradient(100deg, var(--surface-2) 30%, var(--border) 50%, var(--surface-2) 70%);
+  background-size: 250% 100%;
+  animation: pic-shimmer 1.6s linear infinite;
+}
+
+.media-tile.pic-failed,
+.att-file.pic-failed,
+.drop-row.pic-failed {
+  border-style: dashed;
+}
+
+/* A file that couldn't load is shown at full strength so its Retry button isn't faded like a file that's merely on its way. */
+.att-file.is-missing.pic-failed,
+.drop-row.is-missing.pic-failed {
+  opacity: 1;
+}
+
+.media-tile.pic-loading,
+.media-tile.pic-failed {
+  align-content: center;
+  gap: 5px;
+  padding: 6px;
+  text-align: center;
+  line-height: 1.25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pic-loading,
+  .pic-spinner,
+  .media-tile.pic-loading,
+  .att-file.pic-loading,
+  .drop-row.pic-loading {
+    animation: none;
+  }
+}
+
 .gif-attached {
   display: flex;
   align-items: center;

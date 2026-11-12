@@ -67,6 +67,8 @@ const el = {
   pinMeta: $('pin-meta'),
   pinClear: $('pin-clear'),
   togglePin: $('toggle-pin'),
+  togglePriorDelete: $('toggle-prior-delete'),
+  priorConfirm: $('prior-confirm'),
   pinForm: $('pin-form'),
   pinInput: $('pin-input'),
   pinCancel: $('pin-cancel'),
@@ -902,6 +904,56 @@ async function deleteDay(group, scope) {
   }
 }
 
+/** Shows (or hides) the "Delete all earlier days’ messages: For me / Ours for everyone" row under the toolbar. */
+function togglePriorDeleteChoices() {
+  const box = el.priorConfirm;
+  if (!box.hidden) {
+    box.hidden = true;
+    return;
+  }
+  const todayStart = dayBounds(Date.now()).start;
+  if (!state.more && !state.messages.some((m) => m.createdAt < todayStart)) {
+    toast('No messages from earlier days');
+    return;
+  }
+  const me = state.settings.department;
+  const narrowed = state.filter !== 'all' || state.search;
+  box.replaceChildren(
+    h('span', { class: 'msg-confirm-label' }, 'Delete all earlier days’ messages'),
+    h('button', { type: 'button', class: 'chip', onclick: () => deletePriorDays('me') }, 'For me'),
+    h('button', { type: 'button', class: ['chip', 'is-danger'], onclick: () => deletePriorDays('everyone') }, 'Ours for everyone'),
+    h('button', { type: 'button', class: 'chip is-quiet', onclick: () => (box.hidden = true) }, 'Cancel'),
+    h(
+      'span',
+      { class: 'msg-confirm-hint' },
+      `Everything from before today${narrowed ? ' in this view' : ''}. “For me” hides it on this computer. “Ours for everyone” removes the messages ${deptLabel(me)} sent, from every computer. Today’s messages are kept.`,
+    ),
+  );
+  box.hidden = false;
+  box.querySelector('button').focus();
+}
+
+/** Deletes every message from before today (respecting the current tab and search). */
+async function deletePriorDays(scope) {
+  el.priorConfirm.hidden = true;
+  try {
+    const { ids } = await okv.deletePriorDays({ scope, filter: state.filter, search: state.search });
+    if (!ids.length) {
+      toast('Nothing to delete');
+      return;
+    }
+    const n = `${ids.length} message${ids.length === 1 ? '' : 's'}`;
+    toast(scope === 'me' ? `${n} from earlier days deleted on this computer` : `${n} from earlier days deleted for everyone`, {
+      label: 'Undo',
+      run: () => okv.undoDeleteMany({ ids, scope }).catch(() => toast('Couldn’t undo that')),
+    });
+  } catch {
+    toast('Couldn’t delete those messages');
+  }
+}
+
+el.togglePriorDelete.addEventListener('click', togglePriorDeleteChoices);
+
 /**
  * Redraws the message list. `anchorDay` keeps that day's banner where it was
  * on screen (used when a day is opened or folded).
@@ -1615,12 +1667,46 @@ function fileNameOf(file) {
   return `Screenshot ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}.${ext}`;
 }
 
-async function addAttachment(file) {
+// Photos and screenshots bigger than this are scaled down before they're sent. Sending a 10 MB phone photo to
+// every computer takes a long time and nobody needs it at full size; smaller ones are sent exactly as they are.
+const SHRINK_OVER_BYTES = 2 * 1024 * 1024;
+const SHRINK_MAX_SIDE = 2560; // pixels, longest side
+const SHRINK_READ_LIMIT = 100 * 1024 * 1024; // not worth trying to open anything bigger than this
+const SHRINKABLE = ['image/jpeg', 'image/png', 'image/webp', 'image/bmp']; // never GIFs: they'd stop moving
+
+/** A smaller JPEG copy of a very large photo, or the file itself if it's small, isn't a photo, or can't be made smaller. */
+async function shrinkPhoto(file, name) {
+  if (!SHRINKABLE.includes(file.type) || file.size <= SHRINK_OVER_BYTES || file.size > SHRINK_READ_LIMIT) return file;
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const scale = Math.min(1, SHRINK_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; // JPEG has no see-through areas
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const encode = (quality) => new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    let blob = await encode(0.85);
+    if (blob && blob.size > SHRINK_OVER_BYTES) blob = await encode(0.7);
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], name.replace(/\.(png|jpe?g|webp|bmp)$/i, '') + '.jpg', { type: 'image/jpeg' });
+  } catch {
+    return file; // couldn't be opened as a picture here: send it as it is
+  }
+}
+
+async function addAttachment(original) {
   el.composeError.hidden = true;
-  const name = fileNameOf(file);
+  const name = fileNameOf(original);
+  let file = original;
   if (state.pendingFiles.length >= state.maxAttach) return showGifError(`You can attach up to ${state.maxAttach} files to one message.`);
   if (state.blockedExt.has(fileExt(name))) return showGifError(`“${name}” can’t be sent: programs, scripts, web pages and macro files aren’t allowed.`);
   if (file.size === 0) return showGifError(`“${name}” is empty.`);
+  file = await shrinkPhoto(original, name);
+  if (file !== original) toast(`Photo resized for sending (${formatSize(original.size)} → ${formatSize(file.size)})`);
   if (file.size > state.fileMaxBytes) return showGifError(`“${name}” is ${formatSize(file.size)}. The limit is ${formatSize(state.fileMaxBytes)}.`);
   const total = state.pendingFiles.reduce((n, f) => n + f.size, 0) + file.size;
   if (total > state.attachTotal) return showGifError(`Those files are too large together. The limit is ${formatSize(state.attachTotal)} for one message.`);
@@ -1629,7 +1715,7 @@ async function addAttachment(file) {
   if (head[0] === 0x4d && head[1] === 0x5a) return showGifError(`“${name}” is a program, which can’t be sent.`);
   const isImage = IMAGE_TYPES.includes(file.type);
   const url = isImage ? URL.createObjectURL(new Blob([data], { type: file.type })) : null;
-  state.pendingFiles.push({ name, size: file.size, data, url, isImage });
+  state.pendingFiles.push({ name: file === original ? name : file.name, size: file.size, data, url, isImage });
   renderPending();
   updateSendState();
   el.text.focus();
@@ -1684,8 +1770,82 @@ function attachmentsNode(m) {
   return h('div', { class: 'msg-attachments' }, ...m.attachments.map((a) => (a.kind === 'image' ? imageAttachment(m, a) : fileAttachment(m, a))));
 }
 
+/**
+ * What stands in for a picture or GIF that hasn't reached this computer: a shimmering box the picture's shape
+ * while it's on its way, and once no computer has supplied it for a while, "couldn't load" with a Retry button.
+ */
+function pendingPicture(cls, load, hash, what, w, height) {
+  // Keeps the picture's proportions (never taller than the picture itself would be) so the list doesn't jump when it arrives.
+  const shaped = (node) => {
+    if (w > 0 && height > 0) {
+      node.style.aspectRatio = `${w} / ${height}`;
+      node.style.width = `${Math.min(w, 240)}px`;
+    }
+    return node;
+  };
+  if (load !== 'failed') {
+    return shaped(
+      h(
+        'div',
+        { class: [cls, 'pic-loading'], role: 'status', 'aria-label': `${what} is loading` },
+        h('span', { class: 'pic-spinner', 'aria-hidden': 'true' }),
+        h('span', null, `${what} is on its way…`),
+      ),
+    );
+  }
+  const retry = h('button', { type: 'button', class: 'chip' }, 'Retry');
+  const box = h(
+    'div',
+    { class: [cls, 'pic-failed'], role: 'status' },
+    h('span', null, `Couldn’t load this ${what === 'GIF' ? what : what.toLowerCase()}`),
+    h('small', null, 'No computer has it right now'),
+    retry,
+  );
+  shaped(box);
+  retry.addEventListener('click', async () => {
+    retry.disabled = true;
+    try {
+      await okv.retryBlob(hash);
+      box.replaceWith(pendingPicture(cls, 'loading', hash, what, w, height));
+    } catch {
+      retry.disabled = false;
+      toast('Couldn’t try again');
+    }
+  });
+  return box;
+}
+
+/** Redraws whichever screen can show a picture or file that is on its way (or couldn't load). */
+function refreshBlobViews() {
+  if (!state.settings.department) return;
+  if (state.screen === 'board') refresh();
+  else if (state.screen === 'media') refreshMedia();
+  else if (state.screen === 'dropbox') refreshDrops();
+}
+
+/** The Retry button for a file nobody could supply: asks every computer again, then redraws as "on its way". */
+function retryChip(hash) {
+  const button = h('button', { type: 'button', class: 'chip' }, 'Retry');
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      await okv.retryBlob(hash);
+      refreshBlobViews();
+    } catch {
+      button.disabled = false;
+      toast('Couldn’t try again');
+    }
+  });
+  return button;
+}
+
+/** What a file that isn't here yet says about itself: on its way, or couldn't be loaded. */
+function waitNote(load, expired, archivedText) {
+  return expired ? archivedText : load === 'failed' ? 'Couldn’t load · no computer has it right now' : 'On its way…';
+}
+
 function imageAttachment(m, a) {
-  if (!a.have) return h('div', { class: 'att-image-wait' }, a.expired ? 'Image archived (older than a week)' : 'Image is on its way…');
+  if (!a.have) return a.expired ? h('div', { class: 'att-image-wait' }, 'Image archived (older than a week)') : pendingPicture('att-image-wait', a.load, a.hash, 'Image', a.w, a.h);
   const img = h('img', { class: 'att-image', src: `okv-file://${a.hash}`, alt: a.name, width: a.w, height: a.h, draggable: 'false' });
   img.addEventListener('error', () => img.closest('.att-image-btn').replaceWith(fileAttachment(m, a))); // can't be drawn: show it as a file
   return h(
@@ -1696,13 +1856,15 @@ function imageAttachment(m, a) {
 }
 
 function fileAttachment(m, a) {
-  const note = !a.have ? (a.expired ? 'Archived (older than a week)' : 'On its way…') : formatSize(a.size);
+  const note = !a.have ? waitNote(a.load, a.expired, 'Archived (older than a week)') : formatSize(a.size);
+  const failed = !a.have && !a.expired && a.load === 'failed';
   return h(
     'div',
-    { class: ['att-file', !a.have && 'is-missing'] },
+    { class: ['att-file', !a.have && 'is-missing', !a.have && !a.expired && !failed && 'pic-loading', failed && 'pic-failed'] },
     h('span', { class: 'att-icon' }, fileLabel(a.name)),
     h('div', { class: 'att-meta' }, h('span', { class: 'att-name', title: a.name }, a.name), h('small', null, note)),
     a.have ? h('div', { class: 'att-actions' }, h('button', { type: 'button', class: 'chip', onclick: () => openAttachment(a) }, 'Open'), h('button', { type: 'button', class: 'chip', onclick: () => saveAttachment(a) }, 'Save a copy')) : null,
+    failed ? h('div', { class: 'att-actions' }, retryChip(a.hash)) : null,
   );
 }
 
@@ -1813,7 +1975,13 @@ function mediaWho(x) {
 function mediaTile(x) {
   const message = { id: x.messageId, from: x.from, author: x.author, createdAt: x.createdAt };
   const src = x.kind === 'gif' ? `okv-gif://${x.hash}` : `okv-file://${x.hash}`;
-  if (!x.present) return h('div', { class: 'media-tile is-missing', title: mediaWho(x) }, x.archived ? 'Archived' : 'On its way…');
+  if (!x.present && !x.archived) {
+    if (x.load === 'failed') {
+      return h('div', { class: 'media-tile is-missing pic-failed', title: mediaWho(x) }, h('span', null, 'Couldn’t load'), retryChip(x.hash));
+    }
+    return h('div', { class: 'media-tile is-missing pic-loading', role: 'status', 'aria-label': `${x.kind === 'gif' ? 'GIF' : 'Image'} is loading`, title: mediaWho(x) }, h('span', { class: 'pic-spinner', 'aria-hidden': 'true' }), h('span', null, 'On its way…'));
+  }
+  if (!x.present) return h('div', { class: 'media-tile is-missing', title: mediaWho(x) }, 'Archived');
   const file = x.kind === 'gif' ? undefined : { hash: x.hash, name: x.name, size: x.size };
   return h(
     'button',
@@ -1825,10 +1993,11 @@ function mediaTile(x) {
 
 function mediaRow(x) {
   const a = { hash: x.hash, name: x.name, size: x.size };
-  const note = !x.present ? (x.archived ? 'Archived (older than a week)' : 'On its way…') : formatSize(x.size);
+  const note = !x.present ? waitNote(x.load, x.archived, 'Archived (older than a week)') : formatSize(x.size);
+  const failed = !x.present && !x.archived && x.load === 'failed';
   return h(
     'div',
-    { class: ['att-file', 'media-row', !x.present && 'is-missing'] },
+    { class: ['att-file', 'media-row', !x.present && 'is-missing', !x.present && !x.archived && !failed && 'pic-loading', failed && 'pic-failed'] },
     h('span', { class: 'att-icon' }, fileLabel(x.name)),
     h('div', { class: 'att-meta' }, h('span', { class: 'att-name', title: x.name }, x.name), h('small', null, `${note} · ${mediaWho(x)}`)),
     h(
@@ -1836,6 +2005,7 @@ function mediaRow(x) {
       { class: 'att-actions' },
       x.present ? h('button', { type: 'button', class: 'chip', onclick: () => openAttachment(a) }, 'Open') : null,
       x.present ? h('button', { type: 'button', class: 'chip', onclick: () => saveAttachment(a) }, 'Save a copy') : null,
+      failed ? retryChip(x.hash) : null,
       h('button', { type: 'button', class: 'chip is-quiet', onclick: () => showMessageInChat(x.messageId) }, 'Show in chat'),
     ),
   );
@@ -1885,7 +2055,8 @@ function renderDrops() {
 function dropRow(d) {
   const f = d.file;
   const a = { hash: f.hash, name: f.name, size: f.size };
-  const note = d.have ? formatSize(f.size) : 'On its way…';
+  const note = d.have ? formatSize(f.size) : waitNote(d.load);
+  const failed = !d.have && d.load === 'failed';
   const who = `${deptLabel(d.from)}${d.author ? ` · ${d.author}` : ''} · ${whenLabel(d.createdAt)}`;
   const src = `okv-file://${f.hash}`;
   const thumb =
@@ -1898,7 +2069,7 @@ function dropRow(d) {
       : h('span', { class: 'att-icon' }, fileLabel(f.name));
   return h(
     'div',
-    { class: ['drop-row', !d.have && 'is-missing'] },
+    { class: ['drop-row', !d.have && 'is-missing', !d.have && !failed && 'pic-loading', failed && 'pic-failed'] },
     thumb,
     h('div', { class: 'att-meta' }, h('span', { class: 'att-name', title: f.name }, f.name), h('small', null, `${note} · ${who}`)),
     h(
@@ -1906,6 +2077,7 @@ function dropRow(d) {
       { class: 'att-actions' },
       d.have ? h('button', { type: 'button', class: 'chip', onclick: () => openAttachment(a) }, 'Open') : null,
       d.have ? h('button', { type: 'button', class: 'chip', onclick: () => saveAttachment(a) }, 'Save a copy') : null,
+      failed ? retryChip(f.hash) : null,
       h('button', { type: 'button', class: 'chip is-quiet', onclick: () => removeDrop(d) }, 'Remove'),
     ),
   );
@@ -2070,6 +2242,10 @@ function gifNode(m) {
   if (!m.gif) return null;
   const { hash, w, h: height } = m.gif;
   const wrap = h('div', { class: 'msg-gif' });
+  if (m.gifLoad) {
+    wrap.append(pendingPicture('msg-gif-wait', m.gifLoad, hash, 'GIF', w, height));
+    return wrap;
+  }
   const img = h('img', {
     class: 'msg-gif-img',
     src: `okv-gif://${hash}`,
@@ -2081,7 +2257,7 @@ function gifNode(m) {
   img.addEventListener('error', () => {
     // Not here yet; it's refreshed when the file arrives (see onGifReady).
     wrap.classList.add('is-missing');
-    img.replaceWith(h('div', { class: 'msg-gif-wait' }, 'GIF is on its way…'));
+    img.replaceWith(pendingPicture('msg-gif-wait', 'loading', hash, 'GIF', w, height));
   });
   wrap.append(img);
   return wrap;
@@ -2885,6 +3061,9 @@ okv.onGifReady(() => {
   if (state.settings.department && state.screen === 'board') refresh();
   if (state.screen === 'media') refreshMedia();
 });
+
+// A picture or GIF has been on its way for too long (or Retry was pressed): redraw how it's shown.
+okv.onBlobsChanged(refreshBlobViews);
 
 // A file or image that was still on its way has arrived from another computer.
 okv.onFileReady(() => {

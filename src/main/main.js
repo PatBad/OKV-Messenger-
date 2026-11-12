@@ -231,6 +231,8 @@ async function start() {
     tcpPorts: env.OKV_TCP_PORT ? [Number(env.OKV_TCP_PORT)] : undefined,
     staticPeers: [...(config.get('staticPeers') || []), ...(env.OKV_PEERS ? env.OKV_PEERS.split(',') : [])],
   });
+  // A GIF or picture has been on its way for too long (or the Retry button was pressed): redraw how it's shown.
+  network.on('blobs-changed', () => send('blobs-changed'));
   network.on('peers', (peers) => {
     send('peers', peers);
     rememberPeers();
@@ -1178,7 +1180,11 @@ ipcMain.handle('query', (_e, opts = {}) => {
       editedAt: edit ? edit.createdAt : null,
       reactions: reactions.forMessage(m.id, REACTIONS),
       reply: m.replyTo ? store.quote(m.replyTo, isRemoved, textOf) : null,
-      attachments: m.attachments ? m.attachments.map((a) => ({ ...a, have: files.has(a.hash), expired: attachmentsExpired(m) })) : undefined,
+      attachments: m.attachments
+        ? m.attachments.map((a) => ({ ...a, have: files.has(a.hash), expired: attachmentsExpired(m), load: files.has(a.hash) || !network ? null : network.blobState(a.hash) }))
+        : undefined,
+      // Only while the GIF hasn't arrived: 'loading', or 'failed' once no computer has supplied it for a while.
+      gifLoad: m.gif && !gifs.has(m.gif.hash) && network ? network.blobState(m.gif.hash) : null,
       // For messages we sent: which of the people they're for have seen it.
       seen: m.from === me ? seenInfo(m) : null,
       // For messages sent to us: whether this department has already said it's seen it.
@@ -1405,7 +1411,8 @@ ipcMain.handle('medications-seen', () => {
 
 /** A file in the Drop box as the page sees it. */
 function dropView(r) {
-  return { ...toWire(r), local: Boolean(r.local), have: files.has(r.file.hash) };
+  const have = files.has(r.file.hash);
+  return { ...toWire(r), local: Boolean(r.local), have, load: have || !network ? null : network.blobState(r.file.hash) };
 }
 
 /** Files other computers have put in the Drop box (and not taken out again) since this one last looked. */
@@ -1738,6 +1745,7 @@ ipcMain.handle('media-list', (_e, opts = {}) =>
     isRemoved,
     hasFile: (hash) => files.has(hash),
     hasGif: (hash) => gifs.has(hash),
+    loadState: (hash) => (network ? network.blobState(hash) : null),
     retentionDays: ATTACHMENT_RETENTION_DAYS,
     filter: ['all', 'images', 'files'].includes(opts.filter) ? opts.filter : 'all',
     search: typeof opts.search === 'string' ? opts.search.slice(0, 100) : '',
@@ -1760,6 +1768,12 @@ ipcMain.handle('fetch-gif-url', async (_e, url) => {
 // Lets the page record what a paste contained when it couldn't use it, to help work out why.
 ipcMain.on('log-note', (_e, note) => {
   if (typeof note === 'string') log.info(`page: ${note.slice(0, 600)}`);
+});
+
+// The Retry button on a GIF or picture that couldn't be loaded.
+ipcMain.handle('retry-blob', (_e, { hash } = {}) => {
+  if (typeof hash !== 'string' || !GIF_HASH.test(hash)) throw new Error('Not a valid file id');
+  if (network) network.retryBlob(hash);
 });
 
 ipcMain.handle('delete-message', (_e, input) => setDeleted(input, true));
@@ -1796,7 +1810,20 @@ ipcMain.handle('delete-day', (_e, opts = {}) => {
   return { ids: setManyDeleted(messages.map((m) => m.id), scope, true) };
 });
 
-ipcMain.handle('undo-delete-many', (_e, { ids, scope } = {}) => {
+// Deletes every message from before today (local time), in the current tab and
+// search. Returns the ids deleted, for Undo.
+ipcMain.handle('delete-prior-days', (_e, opts = {}) => {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const { messages } = store.query({
+    ...queryFilters(opts),
+    before: { createdAt: startOfToday, id: '' },
+    limit: Number.MAX_SAFE_INTEGER,
+  });
+  return { ids: setManyDeleted(messages.map((m) => m.id), opts.scope, true) };
+});
+
+ipcMain.handle('undo-delete-many',(_e, { ids, scope } = {}) => {
   if (!Array.isArray(ids)) throw new Error('No messages given');
   setManyDeleted(ids.filter((id) => typeof id === 'string'), scope, false);
 });
