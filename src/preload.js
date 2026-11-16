@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('okv', {
   addMedication: (request) => ipcRenderer.invoke('medication-add', request),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   setMedicationStatus: (change) => ipcRenderer.invoke('medication-status', change),
+  addMedicationNote: (note) => ipcRenderer.invoke('medication-note', note),
   clearDoneMedications: () => ipcRenderer.invoke('medications-clear-done'),
   markMedicationsSeen: () => ipcRenderer.invoke('medications-seen'),
   listDrops: () => ipcRenderer.invoke('drops-list'),

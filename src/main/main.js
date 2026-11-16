@@ -496,7 +496,7 @@ function refreshTray() {
   const dept = DEPARTMENTS.find((d) => d.id === config.get('department'));
   const update = updater ? updater.status : { state: 'dev' };
   const summary = unread();
-  const unreadNow = summary.count + summary.reminders.unseen + summary.medications.requests + summary.medications.completed;
+  const unreadNow = summary.count + summary.reminders.unseen + summary.medications.requests + summary.medications.completed + summary.medications.messages;
   tray.setToolTip(unreadNow ? `${brand.productName} – ${unreadNow} new` : brand.productName);
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -550,7 +550,7 @@ function unread() {
     count: 0,
     urgent: false,
     reminders: { open: 0, overdue: 0, unseen: 0, unseenDue: false },
-    medications: { open: 0, requests: 0, completed: 0 },
+    medications: { open: 0, requests: 0, completed: 0, messages: 0 },
     drops: { unseen: 0 },
   };
   if (!store || !config.get('department')) return empty;
@@ -809,13 +809,14 @@ function medicationView(m) {
     local: Boolean(m.local),
     state: s ? s.status : 'open',
     closed: s ? { by: s.by, name: s.byName, at: s.createdAt } : null,
+    notes: medications.notesFor(m).map((n) => ({ id: n.id, text: n.text, by: n.by, name: n.byName, at: n.createdAt })),
   };
 }
 
 /**
  * For the badges and tab. `open` is every unfinished request. `requests` is new ones the alert department hasn't
  * looked at yet. `completed` is requests this department logged that someone else has ticked off since it last looked
- * (the blue notification).
+ * (the blue notification). `messages` is notes someone else typed on requests this department logged.
  */
 function medicationSummary() {
   const department = config.get('department');
@@ -824,6 +825,7 @@ function medicationSummary() {
   let open = 0;
   let requests = 0;
   let completed = 0;
+  let messages = 0;
   for (const m of medications.all()) {
     const s = medications.status(m);
     if (!s) {
@@ -832,8 +834,13 @@ function medicationSummary() {
     } else if (s.status === 'done' && m.from === department && !s.local && s.receivedAt > seenAt && s.createdAt >= since) {
       completed++;
     }
+    if (m.from === department) {
+      for (const n of medications.notesFor(m)) {
+        if (n.by !== department && !n.local && n.receivedAt > seenAt && n.createdAt >= since) messages++;
+      }
+    }
   }
-  return { open, requests, completed };
+  return { open, requests, completed, messages };
 }
 
 function onMedicationsAdded(added) {
@@ -844,10 +851,17 @@ function onMedicationsAdded(added) {
     .filter((r) => r.type === 'status' && r.status === 'done' && !r.local && r.createdAt >= since)
     .map((r) => medications.meds.get(r.target))
     .filter((m) => m && m.from === department && medications.status(m) && medications.status(m).status === 'done');
+  // Messages typed on requests this department logged, by someone in another department.
+  const messages = added
+    .filter((r) => r.type === 'note' && !r.local && r.by !== department && r.createdAt >= since)
+    .map((r) => ({ note: r, request: medications.meds.get(r.target) }))
+    .filter(({ request }) => request && request.from === department)
+    .map(({ note, request }) => ({ patient: request.patient, text: note.text, name: note.byName }));
   send('medications-changed', {
-    alert: done.length ? 'done' : requests.length ? 'normal' : null,
+    alert: done.length ? 'done' : requests.length || messages.length ? 'normal' : null,
     done: done.map((m) => m.patient),
     requests: requests.map((m) => m.patient),
+    messages,
   });
   sendUnread();
 }
@@ -1385,6 +1399,32 @@ ipcMain.handle('copy-text', (_e, text) => {
 });
 
 ipcMain.handle('medication-status', (_e, { id, status } = {}) => setMedicationStatus(id, status));
+
+// A typed message on a request. It notifies the department that logged the request (when someone else writes it).
+ipcMain.handle('medication-note', (_e, { id, text } = {}) => {
+  const m = typeof id === 'string' ? medications.meds.get(id) : null;
+  if (!m) throw new Error('Request not found');
+  const department = config.get('department');
+  if (!department) throw new Error('Choose a department first');
+  const [record] = medications.add(
+    [
+      {
+        type: 'note',
+        id: crypto.randomUUID(),
+        target: id,
+        text,
+        by: department,
+        byName: config.get('author') || '',
+        host: HOST,
+        createdAt: Date.now(),
+      },
+    ],
+    { local: true },
+  );
+  if (!record) throw new Error('Message was empty or too long');
+  if (network) network.pushNow([toWire(record)], 'medications');
+  return medicationView(m);
+});
 
 // Clears finished requests from this computer's Done list (they stay in the history file).
 ipcMain.handle('medications-clear-done', () => {

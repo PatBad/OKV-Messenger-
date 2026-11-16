@@ -201,6 +201,7 @@ function sanitizeMedicationItems(items) {
  * The medications collection holds two kinds of record:
  *  - type 'med': a client's request for repeat / chronic medication, logged by one department
  *  - type 'status': ticking it off as done, cancelling it, or opening it again (undo)
+ *  - type 'note': a typed message about a request, sent to the department that logged it
  */
 function sanitizeMedicationRecord(r) {
   if (!r || typeof r !== 'object' || !validId(r.id)) return null;
@@ -226,6 +227,17 @@ function sanitizeMedicationRecord(r) {
     if (!DEPARTMENT_IDS.includes(r.by)) return null;
     if (typeof byName !== 'string' || byName.length > LIMITS.AUTHOR) return null;
     return { v: 1, type: 'status', id: r.id, target: r.target, status: r.status, by: r.by, byName: byName.trim(), host, createdAt };
+  }
+
+  // A short typed message on a request (e.g. "Out of stock, ready tomorrow"), which notifies the department that logged it.
+  if (r.type === 'note') {
+    const byName = r.byName ?? '';
+    if (!validId(r.target) || !DEPARTMENT_IDS.includes(r.by)) return null;
+    if (typeof byName !== 'string' || byName.length > LIMITS.AUTHOR) return null;
+    if (typeof r.text !== 'string') return null;
+    const text = r.text.trim();
+    if (!text || text.length > LIMITS.MED_NOTE) return null;
+    return { v: 1, type: 'note', id: r.id, target: r.target, text, by: r.by, byName: byName.trim(), host, createdAt };
   }
   return null;
 }
@@ -774,11 +786,13 @@ class MedicationLog extends RecordLog {
     super(dir, 'medications.jsonl', sanitizeMedicationRecord);
     this.meds = new Map();
     this.statuses = new Map();
+    this.notes = new Map();
   }
 
   _reset() {
     this.meds = new Map();
     this.statuses = new Map();
+    this.notes = new Map();
   }
 
   _track(record) {
@@ -786,13 +800,19 @@ class MedicationLog extends RecordLog {
       this.meds.set(record.id, record);
       return;
     }
-    const list = this.statuses.get(record.target);
+    const index = record.type === 'note' ? this.notes : this.statuses;
+    const list = index.get(record.target);
     if (list) list.push(record);
-    else this.statuses.set(record.target, [record]);
+    else index.set(record.target, [record]);
   }
 
   all() {
     return [...this.meds.values()];
+  }
+
+  /** The messages typed on a request, oldest first. */
+  notesFor(med) {
+    return [...(this.notes.get(med.id) || [])].sort(compareRecords);
   }
 
   /**

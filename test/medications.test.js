@@ -86,6 +86,40 @@ test('any department can tick a request off, only the one that logged it can can
   assert.equal(reloaded.status(reloaded.meds.get(m.id)).status, 'cancelled');
 });
 
+function note(m, text, by, overrides = {}) {
+  return { type: 'note', id: crypto.randomUUID(), target: m.id, text, by, byName: '', host: 'PC', createdAt: Date.now(), ...overrides };
+}
+
+test('a typed message on a request is kept, tidied, and never changes the request’s status', () => {
+  assert.equal(sanitizeMedicationRecord(note(request(), '', 'clinical')), null, 'a message needs some text');
+  assert.equal(sanitizeMedicationRecord(note(request(), '   ', 'clinical')), null);
+  assert.equal(sanitizeMedicationRecord(note(request(), 'x'.repeat(301), 'clinical')), null);
+  assert.equal(sanitizeMedicationRecord(note(request(), 'Out of stock', 'nobody')), null);
+  assert.equal(sanitizeMedicationRecord({ ...note(request(), 'Out of stock', 'clinical'), target: 'not an id' }), null);
+  assert.equal(sanitizeMedicationRecord({ ...note(request(), 'Out of stock', 'clinical'), text: 42 }), null);
+  assert.equal(sanitizeMedicationRecord(note(request(), '  Out of stock  ', 'clinical')).text, 'Out of stock');
+  assert.ok(sanitizeMedicationRecord(note(request(), 'x'.repeat(300), 'clinical')));
+
+  const dir = tempDir();
+  const log = new MedicationLog(dir).load();
+  const m = request();
+  const t0 = Date.now();
+  log.add([m]);
+  log.add([note(m, 'Out of stock, ready tomorrow', 'clinical', { createdAt: t0 + 2, byName: 'Dr Mongi' }), note(m, 'Will tell the client', 'reception', { createdAt: t0 + 3 })]);
+  assert.equal(log.status(m), null, 'messages don’t tick a request off');
+  assert.deepEqual(
+    log.notesFor(m).map((n) => n.text),
+    ['Out of stock, ready tomorrow', 'Will tell the client'],
+  );
+
+  log.add([status(m, 'done', 'clinical', { createdAt: t0 + 4 })]);
+  assert.equal(log.status(m).status, 'done');
+
+  const reloaded = new MedicationLog(dir).load();
+  assert.equal(reloaded.notesFor(reloaded.meds.get(m.id)).length, 2);
+  assert.equal(reloaded.notesFor(reloaded.meds.get(m.id))[0].byName, 'Dr Mongi');
+});
+
 function makeNode(name, dept, { medications = true } = {}) {
   const dir = tempDir();
   const store = new MessageStore(dir).load();

@@ -184,8 +184,9 @@ const state = {
   remSummary: { open: 0, overdue: 0, unseen: 0, unseenDue: false },
   remSending: false,
   medFilter: 'open',
+  medNote: null, // the message box open on a request: { id, text, focus }
   medicationList: [],
-  medSummary: { open: 0, requests: 0, completed: 0 },
+  medSummary: { open: 0, requests: 0, completed: 0, messages: 0 },
   medRows: [{ name: '', qty: '' }], // the medicines being typed into the request form
   medSending: false,
   dropList: [], // the files in the Drop box
@@ -456,12 +457,14 @@ function renderBadge() {
   el.badgeReminders.classList.toggle('is-overdue', rem.overdue > 0);
   el.badgeReminders.title = rem.overdue ? `${rem.open} open, ${rem.overdue} overdue` : `${rem.open} open`;
   // Blue: new medication requests for us to dispense, and requests we logged that have been completed, since we last looked.
-  const blueCount = med.requests + med.completed;
+  const messages = med.messages || 0;
+  const blueCount = med.requests + med.completed + messages;
   const blue = blueCount > 0;
   const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
   const blueNotes = [
     med.requests ? plural(med.requests, 'new medication request', 'new medication requests') : null,
     med.completed ? `${plural(med.completed, 'medication request', 'medication requests')} completed` : null,
+    messages ? plural(messages, 'new message about a medication request', 'new messages about medication requests') : null,
   ].filter(Boolean);
   // Medications tab: blue with that number, otherwise grey with how many are still to dispense.
   const tabCount = blue ? blueCount : med.open;
@@ -2481,6 +2484,8 @@ async function refreshMedications() {
 function renderMedications() {
   const list = el.medList;
   const top = list.scrollTop;
+  // A refresh while someone is typing a message shouldn't take the cursor away.
+  if (state.medNote && document.activeElement && document.activeElement.classList.contains('med-note-input')) state.medNote.focus = true;
   el.medClear.hidden = state.medFilter !== 'done' || !state.medicationList.length;
   list.replaceChildren(...(state.medicationList.length ? state.medicationList.map(medicationNode) : [medicationsEmpty()]));
   list.scrollTop = top;
@@ -2544,6 +2549,15 @@ function medicationNode(m) {
     : `${cancelled ? 'Cancelled' : 'Completed'} by ${deptLabel(m.closed.by)}${m.closed.name ? ` · ${m.closed.name}` : ''} · ${whenLabel(m.closed.at)}`;
 
   const actions = [];
+  if (open) {
+    actions.push(
+      h(
+        'button',
+        { type: 'button', class: 'chip is-quiet', title: m.from === me ? 'Add a note to this request' : `Send a message to ${deptLabel(m.from)} about this request`, onclick: () => toggleMedNote(m) },
+        m.from === me ? 'Note' : `Message ${deptLabel(m.from)}`,
+      ),
+    );
+  }
   if (open && m.from === me) actions.push(h('button', { type: 'button', class: 'chip is-quiet', onclick: () => changeMedication(m, 'cancelled') }, 'Cancel'));
   if (!open) actions.push(h('button', { type: 'button', class: 'chip is-quiet', onclick: () => changeMedication(m, 'open') }, 'Reopen'));
 
@@ -2576,9 +2590,81 @@ function medicationNode(m) {
           ),
         ),
       ),
+      m.notes.length ? h('ul', { class: 'med-notes' }, ...m.notes.map(noteNode)) : null,
+      open && state.medNote && state.medNote.id === m.id ? noteForm(m) : null,
       h('footer', { class: 'rem-foot' }, h('span', { class: 'rem-meta' }, meta), open ? h('span', { class: 'med-wait' }) : null, ...actions),
     ),
   );
+}
+
+/** One typed message on a request: who wrote it, when, and what it says. */
+function noteNode(n) {
+  const who = `${deptLabel(n.by)}${n.name ? ` · ${n.name}` : ''}`;
+  return h(
+    'li',
+    { class: ['med-note', n.by === state.settings.department && 'is-mine'] },
+    h('span', { class: 'med-note-text' }, n.text),
+    h('span', { class: 'med-note-meta' }, `${who} · ${whenLabel(n.at)}`),
+  );
+}
+
+/** The box for typing a message on a request. Enter sends it, Escape closes it. */
+function noteForm(m) {
+  const draft = state.medNote;
+  const input = h('input', {
+    class: 'med-input med-note-input',
+    type: 'text',
+    maxlength: 300,
+    placeholder: m.from === state.settings.department ? 'Add a note…' : `Message for ${deptLabel(m.from)}, e.g. out of stock`,
+    'aria-label': `Message about ${m.patient}`,
+    value: draft.text,
+    oninput: () => (draft.text = input.value),
+    onkeydown: (e) => {
+      if (e.key === 'Escape') closeMedNote();
+    },
+  });
+  const send = h('button', { type: 'submit', class: 'chip is-done' }, 'Send');
+  const form = h(
+    'form',
+    { class: 'med-note-form', onsubmit: (e) => (e.preventDefault(), sendMedNote(m)) },
+    input,
+    send,
+    h('button', { type: 'button', class: 'chip is-quiet', onclick: closeMedNote }, 'Close'),
+  );
+  if (draft.focus) {
+    draft.focus = false;
+    requestAnimationFrame(() => {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+  }
+  return form;
+}
+
+function toggleMedNote(m) {
+  if (state.medNote && state.medNote.id === m.id) return closeMedNote();
+  state.medNote = { id: m.id, text: '', focus: true };
+  renderMedications();
+}
+
+function closeMedNote() {
+  state.medNote = null;
+  renderMedications();
+}
+
+async function sendMedNote(m) {
+  const draft = state.medNote;
+  const text = draft ? draft.text.trim() : '';
+  if (!text) return;
+  try {
+    await okv.addMedicationNote({ id: m.id, text });
+  } catch {
+    toast('Couldn’t send that message');
+    return;
+  }
+  state.medNote = null;
+  toast(m.from === state.settings.department ? 'Note added' : `Message sent to ${deptLabel(m.from)}`);
+  refreshMedications();
 }
 
 /** Copies text for pasting into the practice software (EzyVet). Returns whether it worked. */
@@ -2926,7 +3012,7 @@ okv.onDropsChanged(({ fresh = [] }) => {
 });
 
 // A medication request was logged, ticked off or changed, here or on another computer.
-okv.onMedicationsChanged(({ alert, done = [], requests = [] }) => {
+okv.onMedicationsChanged(({ alert, done = [], requests = [], messages = [] }) => {
   if (alert === 'done') {
     // The blue notification: a request this department logged has been completed.
     chime(false, 'done');
@@ -2935,7 +3021,13 @@ okv.onMedicationsChanged(({ alert, done = [], requests = [] }) => {
   } else if (alert) {
     chime(false);
     if (!state.expanded) bump();
-    else if (state.screen !== 'medications') toast(`New medication request: ${listNames(requests)}`, null, 'blue');
+    else if (state.screen !== 'medications') {
+      // A message on a request this department logged shows what it says; otherwise it's a new request to dispense.
+      if (messages.length) {
+        const [first] = messages;
+        toast(messages.length === 1 ? `${first.patient}: ${first.text}` : `${messages.length} new messages about medication requests`, null, 'blue');
+      } else toast(`New medication request: ${listNames(requests)}`, null, 'blue');
+    }
   }
   if (state.screen === 'medications') {
     refreshMedications();
