@@ -3157,7 +3157,53 @@ button.med-tick:focus-visible {
   color: var(--bg);
 }
 
-/* ---------- Drop box: the black hole ---------- */
+/* Typed messages on a request ("out of stock, ready tomorrow"), and the box for writing one. */
+.med-notes {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.med-note {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 9px;
+  border-left: 3px solid var(--primary);
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.med-note.is-mine {
+  border-left-color: var(--border);
+}
+
+.med-note-text {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.med-note-meta {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.med-note-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.med-note-input {
+  flex: 1;
+}
+
 
 .dropbox-btn {
   position: relative;
